@@ -410,11 +410,14 @@ semanticassembly/
   README.md            ← quickstart / front door
   Dockerfile           ← self-contained eval image (runs eval.sh)
   eval.sh              ← full suite: snapshots + validator + behavioral
-  research/            ← the design / research docs
+  research/            ← all docs (every .md except the root README)
     DESIGN.md          ← this file (framework + deep design)
     LANGUAGE.md        ← canonical fact vocabulary (refined, complete)
     OPCODES.md         ← rendered semantic op reference
     TODOS.md           ← implicit-state → explicit-fact backlog
+    examples.md        ← guide to the example triptychs
+    testing.md         ← the two-tier test harness
+    docs.md            ← how to view / publish the webpage
   sasm/                ← the toolchain (pure Python, no deps)
     model.py           ← Entity / Program (fact store)
     parser.py          ← .sasm text → Program

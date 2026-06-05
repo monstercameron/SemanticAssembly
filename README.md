@@ -174,13 +174,17 @@ sasm/              the toolchain (pure Python)
 examples/          four C / sasm / s triptychs
 tests/             snapshot (compiler) + check (validator)
 testing/           behavioral harness (testing/Dockerfile + qemu)
+docs/              project webpage (index.html, for GitHub Pages)
 Dockerfile         self-contained eval image (runs eval.sh)
 eval.sh            full suite: snapshots + validator + behavioral
-research/          the design / research docs
+research/          all the docs (every .md except this README)
   DESIGN.md        framework, projection model, validator design, falsifiability
   LANGUAGE.md      the canonical fact vocabulary
   OPCODES.md       rendered semantic op reference
   TODOS.md         implicit-state → explicit-fact backlog / status
+  examples.md      guide to the example triptychs
+  testing.md       the two-tier test harness
+  docs.md          how to view / publish the webpage
 ```
 
 ## Status
