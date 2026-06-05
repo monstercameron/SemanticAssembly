@@ -407,11 +407,14 @@ python -m sasm facts  <file.sasm> <entity> # dump all facts about an entity (age
 
 ```
 semanticassembly/
-  DESIGN.md            ← this file (framework + deep design)
-  LANGUAGE.md          ← canonical fact vocabulary (refined, complete)
-  OPCODES.md           ← rendered semantic op reference
-  TODOS.md             ← implicit-state → explicit-fact backlog
-  README.md            ← quickstart
+  README.md            ← quickstart / front door
+  Dockerfile           ← self-contained eval image (runs eval.sh)
+  eval.sh              ← full suite: snapshots + validator + behavioral
+  research/            ← the design / research docs
+    DESIGN.md          ← this file (framework + deep design)
+    LANGUAGE.md        ← canonical fact vocabulary (refined, complete)
+    OPCODES.md         ← rendered semantic op reference
+    TODOS.md           ← implicit-state → explicit-fact backlog
   sasm/                ← the toolchain (pure Python, no deps)
     model.py           ← Entity / Program (fact store)
     parser.py          ← .sasm text → Program
@@ -426,7 +429,9 @@ semanticassembly/
     simple_add2/       ← leaf function (c / sasm / s)
     challenging_sum_array/ ← loop + memory + CFG
     brainworms_fib/    ← recursion, stack frame, callee-saved
-  tests/
+    hello_world/       ← standalone _start + syscalls
+  tests/               ← snapshot (compiler) + check (validator)
+  testing/             ← qemu behavioral harness
 ```
 
 ---

@@ -23,7 +23,7 @@ degrades.
 `sasm` is an **attention-conditioning format**: it moves the information an edit
 needs from *must-be-inferred-over-distance* to *present-locally*, as a row the
 agent can address and patch — and a validator then catches the cases where the
-edit broke a contract anyway. (See [`DESIGN.md`](DESIGN.md) §2.1.)
+edit broke a contract anyway. (See [`DESIGN.md`](research/DESIGN.md) §2.1.)
 
 It is *thin*: every instruction row still maps to exactly one real assembler
 statement. Lowering (`π`) is a lossy projection that strips all the context and
@@ -97,7 +97,7 @@ $ python -m sasm facts <file.sasm> <entity>    # dump every fact about an entity
 ## What the validator catches
 
 `sasm check` implements the full diagnostic catalog (stable codes, each naming the
-entity handle at fault — see [`DESIGN.md`](DESIGN.md) §14):
+entity handle at fault — see [`DESIGN.md`](research/DESIGN.md) §14):
 
 | area | codes |
 |------|-------|
@@ -170,11 +170,14 @@ sasm/              the toolchain (pure Python)
   regs.tsv abi.tsv formats.tsv extmap.tsv syscalls.tsv csr.tsv
 examples/          four C / sasm / s triptychs
 tests/             snapshot (compiler) + check (validator)
-testing/           Docker + qemu behavioral harness
-DESIGN.md          framework, projection model, validator design, falsifiability
-LANGUAGE.md        the canonical fact vocabulary
-OPCODES.md         rendered semantic op reference
-TODOS.md           implicit-state → explicit-fact backlog / status
+testing/           behavioral harness (testing/Dockerfile + qemu)
+Dockerfile         self-contained eval image (runs eval.sh)
+eval.sh            full suite: snapshots + validator + behavioral
+research/          the design / research docs
+  DESIGN.md        framework, projection model, validator design, falsifiability
+  LANGUAGE.md      the canonical fact vocabulary
+  OPCODES.md       rendered semantic op reference
+  TODOS.md         implicit-state → explicit-fact backlog / status
 ```
 
 ## Status
@@ -187,10 +190,10 @@ the examples. All proven on emulated RISC-V.
 Honestly not done yet: the general `E-DERIVABLE` reachability linter; broader ISA
 coverage (Tiers B/V/P, planned via the official `riscv/riscv-opcodes` generator);
 and some compiler edges the examples don't exercise (multi-function files, the
-compact pipe sugar, `ordinal` ordering). See [`TODOS.md`](TODOS.md).
+compact pipe sugar, `ordinal` ordering). See [`TODOS.md`](research/TODOS.md).
 
 ## Design docs
 
-Start with [`DESIGN.md`](DESIGN.md) for the *why* and the architecture, then
-[`LANGUAGE.md`](LANGUAGE.md) for the exact vocabulary and
-[`OPCODES.md`](OPCODES.md) for the op table.
+Start with [`DESIGN.md`](research/DESIGN.md) for the *why* and the architecture, then
+[`LANGUAGE.md`](research/LANGUAGE.md) for the exact vocabulary and
+[`OPCODES.md`](research/OPCODES.md) for the op table.
