@@ -1,0 +1,7 @@
+.git
+.gitignore
+.gitattributes
+__pycache__/
+*.pyc
+build/
+*.o

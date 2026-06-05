@@ -132,18 +132,30 @@ Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, gol
 
 ## Testing
 
-Two tiers (see [`testing/README.md`](testing/README.md)):
+**One command, fully self-contained** (the reproducible eval environment — Python
+toolchain + riscv64 cross-gcc + qemu baked into one image, no host deps):
+
+```console
+$ docker build -t sasm-eval .
+$ docker run --rm sasm-eval        # runs eval.sh: snapshots + validator + qemu
+...
+==================== ALL EVAL CHECKS PASSED ====================
+```
+
+Or run the tiers individually on a host with Python (and Docker for the last one):
 
 ```console
 $ bash tests/snapshot.sh     # compiler: π(x.sasm) is byte-identical to golden x.s
 $ bash tests/check.sh        # validator: every example validates clean
-$ bash testing/run.sh        # behavioral: assemble + run under qemu (needs Docker)
+$ bash testing/run.sh        # behavioral: assemble + run under qemu (mounts repo)
+$ bash eval.sh               # all three (behavioral tier auto-skips without qemu)
 ```
 
 The behavioral tier compiles each example for `riscv64` and runs it under
-`qemu-riscv64` (in a Docker image with the cross toolchain), asserting real
-results: `add2(2,3)=5`, `sum_array([1..5])=15`, `fib(10)=55`, and `hello` prints
-its message and exits 0.
+`qemu-riscv64`, asserting real results: `add2(2,3)=5`, `sum_array([1..5])=15`,
+`fib(10)=55`, and `hello` prints its message and exits 0. Two Dockerfiles:
+top-level `Dockerfile` is the self-contained whole-suite image;
+`testing/Dockerfile` is the leaner behavioral-only image used by `testing/run.sh`.
 
 ## Project layout
 
