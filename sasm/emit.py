@@ -41,6 +41,16 @@ def _blocks_of(prog: Program, fn: Entity) -> list[Entity]:
     return blocks
 
 
+def _insns_of(prog: Program, block: Entity) -> list[Entity]:
+    """Instructions in execution order: by `ordinal` if the block uses them
+    (all-or-nothing per block, DESIGN §11.1; validator enforces E-ORDER-MIXED),
+    otherwise source order."""
+    insns = prog.members_of(block.name, "insn")
+    if insns and all(i.scalar("ordinal") is not None for i in insns):
+        return sorted(insns, key=lambda i: int(i.scalar("ordinal")))
+    return insns
+
+
 def _resolve_field(prog: Program, insn: Entity, reg_asm: dict, field: str) -> str:
     if field in isa.REGISTER_FIELDS:
         reg = insn.scalar(field)
@@ -121,7 +131,7 @@ def emit(prog: Program) -> str:
         for b in blocks:
             if b.scalar("entry") != "yes" and b.name in targets:
                 lines.append(f"{_label_of(b.name)}:")
-            for insn in prog.members_of(b.name, "insn"):
+            for insn in _insns_of(prog, b):
                 lines.append(_emit_insn(prog, insn, ops, reg_asm))
 
     return "\n".join(lines) + "\n"

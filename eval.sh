@@ -17,6 +17,7 @@ echo
 echo "==================== 2/3  validator (python) ============================="
 bash tests/check.sh || fail=1
 python tests/sugar_test.py || fail=1
+python tests/ordinal_test.py || fail=1
 
 echo
 echo "==================== 3/3  behavioral: assemble + run (qemu-riscv64) ======"

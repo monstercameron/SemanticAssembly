@@ -113,12 +113,13 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done:** equivalence verified by `tests/sugar_test.py` (same facts *and* same
   emitted `.s`); wired into `eval.sh`; existing goldens unaffected.
 
-### C2. `ordinal` ordering 🟢
-- **What:** when a block's insns carry `ordinal`, sort emission by it (today source
-  order only); enforce all-or-nothing per block.
-- **Where:** `sasm/emit.py` (block insn ordering), `validate.py` already has
-  `E-ORDER-MIXED`. DESIGN §11.1.
-- **Done-when:** an ordinaled example emits in ordinal order, byte-stable.
+### C2. `ordinal` ordering 🟢 — ✅ DONE
+- **What:** when a block's insns carry `ordinal`, emit in ordinal order (else
+  source order); all-or-nothing per block.
+- **Where:** `sasm/emit.py` `_insns_of` (sorts by ordinal when all present);
+  `validate.py` already flags `E-ORDER-MIXED`. DESIGN §11.1.
+- **Done:** `tests/ordinal_test.py` (scrambled-source-order insns emit in ordinal
+  order; mixed block flagged); wired into `eval.sh`.
 
 ### C3. `sasm fmt` — canonical formatter 🟡
 - **What:** idempotent, order-preserving re-serializer (one deterministic layout,
