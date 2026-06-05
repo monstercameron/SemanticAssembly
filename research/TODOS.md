@@ -107,11 +107,11 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 
 ## C. Compiler & format features
 
-### C1. Compact pipe sugar 🟢
+### C1. Compact pipe sugar 🟢 — ✅ DONE
 - **What:** `subj op X | rd a0 | base t3 | …` parses to identical one-fact-per-row.
-- **Where:** `sasm/parser.py` (`tokenize`/`parse`); spec in LANGUAGE §20.
-- **Done-when:** the LANGUAGE §20 equivalence holds (sugar and expanded forms
-  produce the same `Program`); a test asserts it; emitter/validator unaffected.
+- **Where:** `sasm/parser.py` (`tokenize` emits `|` tokens; `parse` splits clauses).
+- **Done:** equivalence verified by `tests/sugar_test.py` (same facts *and* same
+  emitted `.s`); wired into `eval.sh`; existing goldens unaffected.
 
 ### C2. `ordinal` ordering 🟢
 - **What:** when a block's insns carry `ordinal`, sort emission by it (today source
@@ -297,7 +297,7 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - [x] ABI table as data — `abi.tsv` (arg/ret/caller/callee/reserved/align/grows/redZone)
 - [x] Effect taxonomy + internal-effect rule — LANGUAGE §10
 - [x] Instruction-ordering decision — *source order canonical, optional `ordinal` key* (DESIGN §11.1); no `next`/`seq` chain; all-or-nothing per block (`E-ORDER-MIXED`); cross-block order is the CFG
-- [~] Compact multi-fact-per-line sugar — designed (LANGUAGE §20); parser support not built → **details: C1**
+- [x] Compact multi-fact-per-line sugar — implemented in `parser.py`; equivalence test `tests/sugar_test.py` (C1)
 - [ ] **`sasm fmt`** — canonical formatter → **details: C3**
 - [x] `facts <entity>` query command — agent-facing introspection (`sasm facts`)
 - [ ] Generator from `riscv/riscv-opcodes` → Tier B/V/P table rows (§7.2) → **details: B1**
