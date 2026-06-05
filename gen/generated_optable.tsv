@@ -1,0 +1,93 @@
+mnemonic	operands	candidate_fields
+add	rd rs1 rs2	destination,firstSource,secondSource
+addi	rd rs1 imm12	destination,firstSource,immediate
+addiw	rd rs1 imm12	destination,firstSource,immediate
+addw	rd rs1 rs2	destination,firstSource,secondSource
+amoadd.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoadd.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoand.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoand.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amocas.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amocas.q	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amocas.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomax.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomax.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomaxu.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomaxu.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomin.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amomin.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amominu.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amominu.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoor.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoor.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoswap.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoswap.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoxor.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+amoxor.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+and	rd rs1 rs2	destination,firstSource,secondSource
+andi	rd rs1 imm12	destination,firstSource,immediate
+auipc	rd imm20	destination,immediate
+beq	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+bge	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+bgeu	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+blt	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+bltu	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+bne	bimm12hi rs1 rs2 bimm12lo	firstSource,secondSource,target
+czero.eqz	rd rs1 rs2	destination,firstSource,secondSource
+czero.nez	rd rs1 rs2	destination,firstSource,secondSource
+div	rd rs1 rs2	destination,firstSource,secondSource
+divu	rd rs1 rs2	destination,firstSource,secondSource
+divuw	rd rs1 rs2	destination,firstSource,secondSource
+divw	rd rs1 rs2	destination,firstSource,secondSource
+ebreak		
+ecall		
+fence	fm pred succ rs1 rd	destination,firstSource
+jal	rd jimm20	destination,target
+jalr	rd rs1 imm12	destination,firstSource,immediate
+lb	rd rs1 imm12	destination,firstSource,immediate
+lbu	rd rs1 imm12	destination,firstSource,immediate
+ld	rd rs1 imm12	destination,firstSource,immediate
+lh	rd rs1 imm12	destination,firstSource,immediate
+lhu	rd rs1 imm12	destination,firstSource,immediate
+lr.d	rd rs1 aq rl	destination,firstSource
+lr.w	rd rs1 aq rl	destination,firstSource
+lui	rd imm20	destination,immediate
+lw	rd rs1 imm12	destination,firstSource,immediate
+lwu	rd rs1 imm12	destination,firstSource,immediate
+mul	rd rs1 rs2	destination,firstSource,secondSource
+mulh	rd rs1 rs2	destination,firstSource,secondSource
+mulhsu	rd rs1 rs2	destination,firstSource,secondSource
+mulhu	rd rs1 rs2	destination,firstSource,secondSource
+mulw	rd rs1 rs2	destination,firstSource,secondSource
+or	rd rs1 rs2	destination,firstSource,secondSource
+ori	rd rs1 imm12	destination,firstSource,immediate
+rem	rd rs1 rs2	destination,firstSource,secondSource
+remu	rd rs1 rs2	destination,firstSource,secondSource
+remuw	rd rs1 rs2	destination,firstSource,secondSource
+remw	rd rs1 rs2	destination,firstSource,secondSource
+sb	imm12hi rs1 rs2 imm12lo	firstSource,offset,secondSource
+sc.d	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+sc.w	rd rs1 rs2 aq rl	destination,firstSource,secondSource
+sd	imm12hi rs1 rs2 imm12lo	firstSource,offset,secondSource
+sh	imm12hi rs1 rs2 imm12lo	firstSource,offset,secondSource
+sll	rd rs1 rs2	destination,firstSource,secondSource
+slli	rd rs1 shamtd	destination,firstSource
+slliw	rd rs1 shamtw	destination,firstSource,immediate
+sllw	rd rs1 rs2	destination,firstSource,secondSource
+slt	rd rs1 rs2	destination,firstSource,secondSource
+slti	rd rs1 imm12	destination,firstSource,immediate
+sltiu	rd rs1 imm12	destination,firstSource,immediate
+sltu	rd rs1 rs2	destination,firstSource,secondSource
+sra	rd rs1 rs2	destination,firstSource,secondSource
+srai	rd rs1 shamtd	destination,firstSource
+sraiw	rd rs1 shamtw	destination,firstSource,immediate
+sraw	rd rs1 rs2	destination,firstSource,secondSource
+srl	rd rs1 rs2	destination,firstSource,secondSource
+srli	rd rs1 shamtd	destination,firstSource
+srliw	rd rs1 shamtw	destination,firstSource,immediate
+srlw	rd rs1 rs2	destination,firstSource,secondSource
+sub	rd rs1 rs2	destination,firstSource,secondSource
+subw	rd rs1 rs2	destination,firstSource,secondSource
+sw	imm12hi rs1 rs2 imm12lo	firstSource,offset,secondSource
+xor	rd rs1 rs2	destination,firstSource,secondSource
+xori	rd rs1 imm12	destination,firstSource,immediate

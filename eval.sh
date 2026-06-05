@@ -21,6 +21,7 @@ python tests/ordinal_test.py || fail=1
 python tests/fmt_test.py || fail=1
 python tests/symbol_test.py || fail=1
 python tests/refine_test.py || fail=1
+python tests/gen_test.py || fail=1
 
 echo
 echo "==================== 3/3  behavioral: assemble + run (qemu-riscv64) ======"

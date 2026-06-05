@@ -15,3 +15,6 @@ venv/
 Thumbs.db
 .idea/
 .vscode/
+
+# upstream riscv-opcodes clone (vendored on demand by gen/)
+gen/riscv-opcodes/

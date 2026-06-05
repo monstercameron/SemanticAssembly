@@ -74,13 +74,18 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
   on data (DESIGN §7.2). Unlocks Tiers B/V/P at once.
 - **Where:** new `gen/`; DESIGN §7.2; feeds `sasm/optable.tsv`.
 - **Sub-tasks:**
-  - [ ] vendor/parse `riscv-opcodes` (operand fields → emit template, encoding).
-  - [ ] apply the PascalCase full-word naming rules (OPCODES.md conventions).
-  - [ ] curated **overrides** layer for what encodings don't say: effects, control
-    kind, ABI-implicit regs (`Call`/`ecall`), pseudo expansions, op width.
-  - [ ] add a per-op `ext` column (replace the class→ext `extmap.tsv` heuristic)
-    and an `op-width` column (replace the derived `_op_width` in `validate.py`).
-  - [ ] checked-in generated table + a regen check in CI.
+  - [x] vendor/parse `riscv-opcodes` — `gen/generate.py` parses the extension
+    files (operands = tokens without `=`); writes `gen/generated_optable.tsv`.
+  - [x] **coverage cross-check** — validates the hand table against ground truth:
+    73/73 real (non-pseudo) ops confirmed upstream; reports the breadth gap (~19
+    ops not yet curated). Guarded by `tests/gen_test.py` (skips without the clone).
+  - [ ] apply the PascalCase full-word naming rules (mnemonic → sem) — needs a
+    curated name map (`sub`→`Subtract` isn't derivable from the mnemonic).
+  - [ ] curated **overrides** layer: effects, control kind, ABI-implicit regs
+    (`Call`/`ecall`), op-specific `base`/`offset`/`target` remap, pseudo expansions.
+  - [ ] add a per-op `ext` column (replace `extmap.tsv` heuristic) and an
+    `op-width` column (replace the derived `_op_width` in `validate.py`).
+  - [ ] replace the hand table with the generated one + a regen check in CI.
 
 ### B2. Tier B — scalar extensions (structural + def/use) 🟡 each
 - [ ] **F / D** floating point — fp registers (`fa*`/`fs*`/`ft*` already in
