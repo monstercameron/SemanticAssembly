@@ -54,6 +54,15 @@ exit_code() {                 # name  expected-exit  source.s
 }
 exit_code data_demo 42 examples/data_demo/data_demo.s
 
+echo "== behavioral tests, cross-TU linking =="
+if $CC -nostdlib -static examples/linked/main.s examples/linked/lib.s -o /tmp/linked 2>/tmp/linked.err; then
+  qemu-riscv64-static /tmp/linked; code=$?
+  if [ "$code" = 42 ]; then echo "PASS        linked (exit 42)"
+  else echo "FAIL        linked (exit $code, want 42)"; fail=1; fi
+else
+  echo "BUILD FAIL  linked"; sed 's/^/    /' /tmp/linked.err; fail=1
+fi
+
 echo "== assemble-validity (clang-independent, gcc as assembler) =="
 for s in examples/*/*.s; do
   if $CC -c "$s" -o /tmp/chk.o 2>/tmp/chk.err; then echo "ASM OK      $s"

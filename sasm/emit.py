@@ -120,12 +120,31 @@ def _emit_data(prog: Program, lines: list[str]) -> None:
                 lines.append(f"\t.size\t{d.name}, {size}")
 
 
+def _type_directive(name: str, symbol_type: str) -> str:
+    kind = "function" if symbol_type == "func" else "object"
+    return f"\t.type\t{name}, @{kind}"
+
+
+def _emit_symbols(prog: Program, lines: list[str]) -> None:
+    """Linker directives for `symbol` entities (external refs / weak / typed)."""
+    for s in prog.of_type("symbol"):
+        binding = s.scalar("binding")
+        if binding == "weak":
+            lines.append(f"\t.weak\t{s.name}")
+        elif binding == "global":
+            lines.append(f"\t.globl\t{s.name}")
+        st = s.scalar("symbolType")
+        if st:
+            lines.append(_type_directive(s.name, st))
+
+
 def emit(prog: Program) -> str:
     """Project a parsed Program to RISC-V assembly text."""
     ops = isa.load_ops()
     reg_asm = isa.load_reg_asm()
     lines: list[str] = []
 
+    _emit_symbols(prog, lines)
     _emit_data(prog, lines)
 
     funcs = prog.of_type("function")
@@ -133,8 +152,13 @@ def emit(prog: Program) -> str:
         lines.append("\t.text")
     for fn in funcs:
         symbol = fn.scalar("symbol", fn.name)
-        if fn.scalar("visibility") == "global":
+        binding = fn.scalar("binding")
+        if binding == "weak":
+            lines.append(f"\t.weak\t{symbol}")
+        elif binding == "global" or fn.scalar("visibility") == "global":
             lines.append(f"\t.globl\t{symbol}")
+        if fn.scalar("symbolType"):
+            lines.append(_type_directive(symbol, fn.scalar("symbolType")))
         lines.append(f"{symbol}:")
 
         blocks = _blocks_of(prog, fn)

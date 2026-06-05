@@ -1,0 +1,44 @@
+# lib — defines a global `triple` function, linked separately from main.
+# Demonstrates cross-translation-unit symbol resolution (C5).
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+Triple is function
+Triple symbol triple
+Triple visibility global
+Triple symbolType func
+Triple abi linux.riscv64
+Triple in n Int64 a0
+Triple out result Int64 a0
+Triple effect none
+Triple leaf yes
+Triple stack bytes 0
+Triple purpose "Return n * 3"
+
+Entry is block
+Entry in Triple
+Entry entry yes
+Entry terminates return
+
+loadThree is insn
+loadThree in Entry
+loadThree operation LoadImmediate
+loadThree destination t0
+loadThree immediate 3
+loadThree purpose "t0 = 3"
+
+multiply is insn
+multiply in Entry
+multiply operation Multiply
+multiply destination a0
+multiply firstSource a0
+multiply secondSource t0
+multiply purpose "result = n * 3"
+
+returnTriple is insn
+returnTriple in Entry
+returnTriple operation Return
+returnTriple purpose "return n*3"

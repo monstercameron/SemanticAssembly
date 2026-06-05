@@ -1,0 +1,61 @@
+# main — calls the externally-defined `triple` (in lib.sasm) and exits with the
+# result. Linked as: gcc -nostdlib -static main.s lib.s -o prog ; ./prog -> exit 42.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64.syscall
+prog entry _start
+
+# `triple` is defined in another translation unit (lib)
+triple is symbol
+triple external yes
+triple binding global
+triple symbolType func
+triple purpose "n * 3, provided by lib"
+
+Main is function
+Main symbol _start
+Main visibility global
+Main abi linux.riscv64.syscall
+Main effect call
+Main effect syscall.exit
+Main leaf no
+Main calls triple
+Main stack bytes 0
+Main purpose "exit(triple(14)) = exit(42)"
+
+Entry is block
+Entry in Main
+Entry entry yes
+Entry terminates return
+
+setArgument is insn
+setArgument in Entry
+setArgument operation LoadImmediate
+setArgument destination a0
+setArgument immediate 14
+setArgument purpose "argument n = 14"
+
+callTriple is insn
+callTriple in Entry
+callTriple operation Call
+callTriple symbol triple
+callTriple effect call
+callTriple arg n a0
+callTriple purpose "a0 = triple(14) = 42"
+
+setExitSyscall is insn
+setExitSyscall in Entry
+setExitSyscall operation LoadImmediate
+setExitSyscall destination a7
+setExitSyscall immediate 93
+setExitSyscall purpose "a7 = exit"
+
+doExit is insn
+doExit in Entry
+doExit operation EnvironmentCall
+doExit syscall exit
+doExit effect syscall.exit
+doExit arg code a0
+doExit purpose "exit(42) — a0 still holds triple's result"

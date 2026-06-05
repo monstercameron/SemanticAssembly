@@ -217,6 +217,7 @@ Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, gol
 | `hello_world` | standalone `_start`, `.rodata` data, syscalls (`EnvironmentCall`) |
 | `sum_of_squares` | **multi-function program** — 3 functions, calls, loop with `mul`, decimal conversion with `div`/`rem`, stack buffer; prints `385` |
 | `data_demo` | `.data` + `.bss` sections, alignment, global loads/stores; exits `42` |
+| `linked` | **two translation units** (`main` + `lib`) — external `symbol`, cross-TU call; exits `42` |
 
 ## Testing
 

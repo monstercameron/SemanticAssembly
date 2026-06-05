@@ -137,10 +137,14 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done:** new `examples/data_demo` uses `.data` + `.bss` + `align`; validates
   clean, assembles, and **runs under qemu (exit 42)** via the harness.
 
-### C5. Symbols / linking 🟡
-- [ ] `symbol` entity emission — `.globl`/`.weak`/`.type`, external refs.
-- [ ] relocations (`%hi`/`%lo`/`%pcrel`/GOT) via `symbol reloc`; `program pic`.
-- [ ] multiple translation units / linker scripts (out of scope for v0, note it).
+### C5. Symbols / linking 🟡 — ✅ MOSTLY DONE
+- [x] `symbol` entity emission — `.weak`/`.globl`/`.type`; function `binding weak`
+  + `symbolType` (`emit._emit_symbols`; `tests/symbol_test.py`).
+- [x] **cross-translation-unit linking** — `examples/linked` (`main.sasm` calls an
+  external `triple` defined in `lib.sasm`); linked + **runs under qemu (exit 42)**.
+- [ ] relocations (`%hi`/`%lo`/`%pcrel`/GOT) via `symbol reloc`; `program pic`
+  (PIC/relocs deferred — the assembler picks the right relocs for `la`/`call`
+  automatically in the static non-PIE path we target). Linker scripts: out of scope.
 
 ## D. Validating the premise (the actual experiment) 🔴
 
