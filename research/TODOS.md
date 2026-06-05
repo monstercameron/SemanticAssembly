@@ -121,12 +121,13 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done:** `tests/ordinal_test.py` (scrambled-source-order insns emit in ordinal
   order; mixed block flagged); wired into `eval.sh`.
 
-### C3. `sasm fmt` — canonical formatter 🟡
-- **What:** idempotent, order-preserving re-serializer (one deterministic layout,
-  grouped by container, stable spacing). Protects positional intra-block order.
-- **Where:** new `sasm/format.py` + CLI `sasm fmt`. DESIGN §11.1.
-- **Done-when:** `fmt(fmt(x)) == fmt(x)`; never reorders rows; round-trips the 5
-  examples with a stable diff.
+### C3. `sasm fmt` — canonical formatter 🟡 — ✅ DONE
+- **What:** idempotent, semantics-preserving re-serializer (one deterministic
+  layout; facts grouped by predicate, order preserved within; args quoted iff
+  they contain whitespace).
+- **Where:** `sasm/format.py` + CLI `sasm fmt [-i]`. DESIGN §11.1.
+- **Done:** `tests/fmt_test.py` proves idempotence and `emit∘parse∘fmt == emit∘parse`
+  on all 5 examples; wired into `eval.sh`.
 
 ### C4. Data-section completeness 🟡
 - **What:** today only `.rodata` + `.ascii` (Bytes) is exercised. Add `.bss`/`.zero`
@@ -299,7 +300,7 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - [x] Effect taxonomy + internal-effect rule — LANGUAGE §10
 - [x] Instruction-ordering decision — *source order canonical, optional `ordinal` key* (DESIGN §11.1); no `next`/`seq` chain; all-or-nothing per block (`E-ORDER-MIXED`); cross-block order is the CFG
 - [x] Compact multi-fact-per-line sugar — implemented in `parser.py`; equivalence test `tests/sugar_test.py` (C1)
-- [ ] **`sasm fmt`** — canonical formatter → **details: C3**
+- [x] **`sasm fmt`** — canonical formatter (`sasm/format.py`, `sasm fmt`); idempotent + semantics-preserving (C3)
 - [x] `facts <entity>` query command — agent-facing introspection (`sasm facts`)
 - [ ] Generator from `riscv/riscv-opcodes` → Tier B/V/P table rows (§7.2) → **details: B1**
 - [x] **`isa.py`** — loads optable/regs TSVs (extend to abi/formats/etc. for the validator)

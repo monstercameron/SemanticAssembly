@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from .emit import EmitError, emit
+from .format import format_program
 from .parser import ParseError, parse
 from .validate import validate
 
@@ -36,6 +37,11 @@ def main(argv=None) -> int:
     p_check = sub.add_parser("check", help="parse + validate, print diagnostics")
     p_check.add_argument("file")
 
+    p_fmt = sub.add_parser("fmt", help="canonical-format a .sasm file")
+    p_fmt.add_argument("file")
+    p_fmt.add_argument("-i", "--in-place", action="store_true",
+                       help="rewrite the file instead of printing to stdout")
+
     p_facts = sub.add_parser("facts", help="dump facts about an entity")
     p_facts.add_argument("file")
     p_facts.add_argument("entity")
@@ -53,6 +59,15 @@ def main(argv=None) -> int:
     except ParseError as e:
         print(f"parse error: {e}", file=sys.stderr)
         return 1
+
+    if args.cmd == "fmt":
+        out = format_program(prog)
+        if args.in_place:
+            with open(args.file, "w", encoding="utf-8", newline="\n") as f:
+                f.write(out)
+        else:
+            sys.stdout.buffer.write(out.encode("utf-8"))
+        return 0
 
     if args.cmd == "check":
         diags = validate(prog)
