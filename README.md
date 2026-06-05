@@ -176,6 +176,35 @@ error   E-ABI-PRESERVE Fib: reuses callee-saved s0 but it is not restored
 warning W-CLOBBER      callFibNumberMinusOne: t2 is live across this call but caller-saved (clobbered)
 ```
 
+### Control flow & loops, made explicit
+
+Labels and fall-through are implicit in raw assembly; here the CFG *is* facts. The
+loop guard names both edges, and the back-edge declares which values are
+loop-carried (`examples/challenging_sum_array/sum_array.sasm`, excerpt):
+
+```text
+Condition is block
+Condition terminates branch
+Condition successor Body
+Condition successor Done
+
+loopGuard operation BranchGreaterOrEqual
+loopGuard firstSource t1
+loopGuard secondSource a1
+loopGuard target Done            # taken edge
+loopGuard fallthrough Body       # not-taken edge — the implicit path, made explicit
+loopGuard reads index
+loopGuard reads count
+
+loopBackEdge operation Jump
+loopBackEdge target Condition
+loopBackEdge liveOut t0:sum       # sum and index are loop-carried —
+loopBackEdge liveOut t1:index     # they must survive into the next iteration
+```
+
+The validator builds the CFG from these edges (`E-CFG-EDGE` flags a branch target
+that isn't a declared successor) and the liveness fixpoint follows the back-edge.
+
 ## Examples
 
 Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, golden).
