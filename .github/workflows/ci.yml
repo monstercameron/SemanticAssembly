@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Fast feedback: compiler snapshots, validator, and the property tests — no Docker.
+  quick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: compiler snapshots (π(x.sasm) == golden x.s)
+        run: bash tests/snapshot.sh
+      - name: validator (all examples clean)
+        run: bash tests/check.sh
+      - name: property tests
+        run: |
+          for t in sugar ordinal fmt symbol refine; do
+            python tests/${t}_test.py
+          done
+
+  # Full reproducible eval: snapshots + validator + behavioral (assemble + run
+  # under qemu-riscv64) inside the self-contained image.
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build eval image
+        run: docker build -t sasm-eval .
+      - name: run full eval suite
+        run: docker run --rm sasm-eval

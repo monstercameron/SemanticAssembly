@@ -167,16 +167,20 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done-when:** a small SemanticScript op lowers to validating, running `.sasm`.
 - **Note:** deliberately last — prove the fact model + validator are useful first.
 
-## F. Tooling / DX / CI 🟢
+## F. Tooling / DX / CI 🟢 — ✅ MOSTLY DONE
 
-- [ ] **CI workflow** — run the `sasm-eval` image (snapshots + validator + qemu)
-  on every push; fail on any diagnostic/snapshot drift.
-- [ ] **Packaging** — `pyproject.toml` so `pip install -e .` gives a `sasm` entry
-  point (today it's `python -m sasm`).
-- [ ] **`LICENSE`** — pick one (MIT?) before publishing.
-- [ ] **Repo URL** in the webpage hero/footer (`docs/index.html` placeholder).
-- [ ] More example coverage for the untested paths above (pipe sugar, ordinal,
-  data section, fp).
+- [x] **CI workflow** — `.github/workflows/ci.yml`: a `quick` job (snapshots +
+  validator + property tests, no Docker) and a `full` job (build + run the
+  `sasm-eval` image: snapshots + validator + qemu) on every push/PR.
+- [x] **Packaging** — `pyproject.toml`; `pip install -e .` gives a `sasm` command
+  (`[project.scripts] sasm = sasm.cli:main`); ships the `.tsv` tables as
+  package-data. Entry point verified to resolve.
+- [x] **`LICENSE`** — MIT.
+- [x] **Repo URL** — `docs/index.html` auto-resolves the GitHub link when served
+  from a `*.github.io` host; left as a placeholder otherwise.
+- [x] More example coverage — pipe sugar (`sugar_test`), ordinal (`ordinal_test`),
+  data section (`data_demo`), cross-TU linking (`linked`); fp coverage waits on
+  Tier B (B2).
 
 ---
 

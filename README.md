@@ -94,8 +94,12 @@ Pure Python 3, **no dependencies**.
 $ python -m sasm emit  <file.sasm>             # print emitted .s
 $ python -m sasm build <file.sasm> -o out.s    # emit to a file (refuses on errors)
 $ python -m sasm check <file.sasm>             # validate, print diagnostics
+$ python -m sasm fmt   <file.sasm> [-i]        # canonical-format
 $ python -m sasm facts <file.sasm> <entity>    # dump every fact about an entity
 ```
+
+Optional install (`pip install -e .`) gives a `sasm` command instead of
+`python -m sasm`.
 
 Every instruction is an addressable handle an agent can inspect and patch:
 

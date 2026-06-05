@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic-assembly"
+version = "0.1.0"
+description = "Agent-editable RISC-V: a thin, checkable fact layer over assembly"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "mreca" }]
+keywords = ["riscv", "assembly", "compiler", "llm", "agents"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Compilers",
+]
+dependencies = []
+
+[project.scripts]
+sasm = "sasm.cli:main"
+
+[tool.setuptools]
+packages = ["sasm"]
+
+# the toolchain is table-driven; ship the .tsv data tables with the package
+[tool.setuptools.package-data]
+sasm = ["*.tsv"]
