@@ -1,6 +1,7 @@
 	.section .rodata
 stdoutMessage:
 	.ascii "Hello from semantic assembly!\n"
+	.size	stdoutMessage, 30
 	.text
 	.globl	_start
 _start:

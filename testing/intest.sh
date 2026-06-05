@@ -42,6 +42,18 @@ standalone() {                # name  expected-stdout  source.s
 standalone hello          "Hello from semantic assembly!" examples/hello_world/hello.s
 standalone sum_of_squares "385"                           examples/sum_of_squares/sum_of_squares.s
 
+# exit-code-only program (no stdout): verifies .data/.bss round-trip
+exit_code() {                 # name  expected-exit  source.s
+  local name=$1 want=$2 src=$3
+  if ! riscv64-linux-gnu-gcc -nostdlib -static "$src" -o "/tmp/$name" 2>"/tmp/$name.err"; then
+    echo "BUILD FAIL  $name"; sed 's/^/    /' "/tmp/$name.err"; fail=1; return
+  fi
+  qemu-riscv64-static "/tmp/$name"; local code=$?
+  if [ "$code" = "$want" ]; then echo "PASS        $name (exit $code)"
+  else echo "FAIL        $name (exit $code, want $want)"; fail=1; fi
+}
+exit_code data_demo 42 examples/data_demo/data_demo.s
+
 echo "== assemble-validity (clang-independent, gcc as assembler) =="
 for s in examples/*/*.s; do
   if $CC -c "$s" -o /tmp/chk.o 2>/tmp/chk.err; then echo "ASM OK      $s"

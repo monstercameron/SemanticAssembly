@@ -1,0 +1,110 @@
+# data_demo — exercises the data sections: an initialized .data value, an
+# uninitialized .bss slot, alignment. Loads `answer` (41), adds 1, round-trips
+# the result through .bss, and exits with it (42). Verify with `echo $?` -> 42.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64.syscall
+prog entry _start
+
+# initialized global, 8-byte aligned
+answer is data
+answer section data
+answer type Int64
+answer value 41
+answer size 8
+answer align 8
+
+# uninitialized global (reserved in .bss), 8-byte aligned
+scratch is data
+scratch section bss
+scratch type Int64
+scratch size 8
+scratch align 8
+
+globalData is memoryRegion
+globalData kind global
+
+DataDemo is function
+DataDemo symbol _start
+DataDemo visibility global
+DataDemo abi linux.riscv64.syscall
+DataDemo effect memory.read
+DataDemo effect memory.write
+DataDemo effect syscall.exit
+DataDemo leaf yes
+DataDemo stack bytes 0
+DataDemo purpose "answer+1 round-tripped through .bss, exit with it (42)"
+
+Entry is block
+Entry in DataDemo
+Entry entry yes
+Entry terminates return
+
+loadAnswerAddress is insn
+loadAnswerAddress in Entry
+loadAnswerAddress operation LoadAddress
+loadAnswerAddress destination t0
+loadAnswerAddress symbol answer
+loadAnswerAddress purpose "t0 = &answer"
+
+loadAnswer is insn
+loadAnswer in Entry
+loadAnswer operation LoadDoubleword
+loadAnswer destination t1
+loadAnswer base t0
+loadAnswer offset 0
+loadAnswer effect memory.read
+loadAnswer memory region globalData
+loadAnswer purpose "t1 = answer (41)"
+
+increment is insn
+increment in Entry
+increment operation AddImmediate
+increment destination t1
+increment firstSource t1
+increment immediate 1
+increment purpose "t1 = 42"
+
+loadScratchAddress is insn
+loadScratchAddress in Entry
+loadScratchAddress operation LoadAddress
+loadScratchAddress destination t2
+loadScratchAddress symbol scratch
+loadScratchAddress purpose "t2 = &scratch"
+
+storeScratch is insn
+storeScratch in Entry
+storeScratch operation StoreDoubleword
+storeScratch secondSource t1
+storeScratch base t2
+storeScratch offset 0
+storeScratch effect memory.write
+storeScratch memory region globalData
+storeScratch purpose "scratch = 42"
+
+loadScratch is insn
+loadScratch in Entry
+loadScratch operation LoadDoubleword
+loadScratch destination a0
+loadScratch base t2
+loadScratch offset 0
+loadScratch effect memory.read
+loadScratch memory region globalData
+loadScratch purpose "a0 = scratch (42)"
+
+setExitSyscall is insn
+setExitSyscall in Entry
+setExitSyscall operation LoadImmediate
+setExitSyscall destination a7
+setExitSyscall immediate 93
+setExitSyscall purpose "a7 = exit"
+
+doExit is insn
+doExit in Entry
+doExit operation EnvironmentCall
+doExit syscall exit
+doExit effect syscall.exit
+doExit arg code a0
+doExit purpose "exit(42)"

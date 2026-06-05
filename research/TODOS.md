@@ -129,12 +129,13 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done:** `tests/fmt_test.py` proves idempotence and `emit∘parse∘fmt == emit∘parse`
   on all 5 examples; wired into `eval.sh`.
 
-### C4. Data-section completeness 🟡
-- **What:** today only `.rodata` + `.ascii` (Bytes) is exercised. Add `.bss`/`.zero`
-  reservation, `Int64`/`Int32` (`.dword`/`.word`) emission, `data align` (`.align`)
-  and `data size` (`.size`) directives.
-- **Where:** `sasm/emit.py` `_emit_data`; LANGUAGE §6. **Untested today.**
-- **Done-when:** an example uses each and assembles/runs.
+### C4. Data-section completeness 🟡 — ✅ DONE
+- **What:** all int widths (`.byte`/`.half`/`.word`/`.dword`), `.bss`/`.zero`
+  reservation, `data align` (`.balign`), `data binding` (`.globl`/`.weak`), and
+  `data size` (`.size`).
+- **Where:** `sasm/emit.py` `_emit_data` (`_DATA_DIRECTIVE`); LANGUAGE §6.
+- **Done:** new `examples/data_demo` uses `.data` + `.bss` + `align`; validates
+  clean, assembles, and **runs under qemu (exit 42)** via the harness.
 
 ### C5. Symbols / linking 🟡
 - [ ] `symbol` entity emission — `.globl`/`.weak`/`.type`, external refs.

@@ -80,6 +80,15 @@ def _emit_insn(prog: Program, insn: Entity, ops: dict, reg_asm: dict) -> str:
     return f"\t{mnemonic}\t{rest}" if sep else f"\t{mnemonic}"
 
 
+# scalar data type -> GAS directive (RISC-V widths)
+_DATA_DIRECTIVE = {
+    "Int8": ".byte", "Nat8": ".byte", "Boolean": ".byte",
+    "Int16": ".half", "Nat16": ".half",
+    "Int32": ".word", "Nat32": ".word",
+    "Int64": ".dword", "Nat64": ".dword", "Address": ".dword",
+}
+
+
 def _emit_data(prog: Program, lines: list[str]) -> None:
     order = ["rodata", "data", "bss"]
     data = prog.of_type("data")
@@ -91,17 +100,24 @@ def _emit_data(prog: Program, lines: list[str]) -> None:
             continue
         lines.append(f"\t.section .{section}")
         for d in by_section[section]:
+            binding = d.scalar("binding")
+            if binding == "global":
+                lines.append(f"\t.globl\t{d.name}")
+            elif binding == "weak":
+                lines.append(f"\t.weak\t{d.name}")
             align = d.scalar("align")
             if align:
-                lines.append(f"\t.align {align}")
+                lines.append(f"\t.balign {align}")          # n bytes (unambiguous)
             lines.append(f"{d.name}:")
-            typ, val = d.scalar("type"), d.scalar("value")
-            if typ == "Bytes":
+            typ, val, size = d.scalar("type"), d.scalar("value"), d.scalar("size")
+            if val is None:                                  # uninitialized (bss): reserve
+                lines.append(f"\t.zero {size}")
+            elif typ == "Bytes":
                 lines.append(f'\t.ascii "{val}"')
-            elif typ == "Int32":
-                lines.append(f"\t.word {val}")
-            else:  # Int64 / Address / default
-                lines.append(f"\t.dword {val}")
+            else:
+                lines.append(f"\t{_DATA_DIRECTIVE.get(typ, '.dword')} {val}")
+            if size is not None and val is not None:
+                lines.append(f"\t.size\t{d.name}, {size}")
 
 
 def emit(prog: Program) -> str:

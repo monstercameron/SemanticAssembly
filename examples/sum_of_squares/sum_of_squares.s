@@ -1,6 +1,7 @@
 	.section .rodata
 newline:
 	.ascii "\n"
+	.size	newline, 1
 	.text
 	.globl	_start
 _start:
