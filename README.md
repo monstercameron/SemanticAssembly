@@ -97,6 +97,19 @@ $ python -m sasm check <file.sasm>             # validate, print diagnostics
 $ python -m sasm facts <file.sasm> <entity>    # dump every fact about an entity
 ```
 
+Every instruction is an addressable handle an agent can inspect and patch:
+
+```console
+$ python -m sasm facts examples/brainworms_fib/fib.sasm callFibNumberMinusOne
+callFibNumberMinusOne is insn
+  in Recurse
+  operation Call
+  symbol fib
+  effect call
+  liveOut s0:number
+  purpose a0 = fib(number-1). number survives in s0 (callee-saved) — safe across the call
+```
+
 ## What the validator catches
 
 `sasm check` implements the full diagnostic catalog (stable codes, each naming the
@@ -121,6 +134,47 @@ error E-VALUE-FLOW computeNumberMinusTwo: reads number but ['a0'] hold ['·call:
 
 That is the bug class assembly hides best — a value silently destroyed across a
 call — surfaced mechanically.
+
+### Clobber handling, made explicit
+
+The check works because the *correct* `fib` writes the contract down. It keeps
+`number` in a callee-saved register across the two recursive calls — and says so
+(`examples/brainworms_fib/fib.sasm`, excerpt):
+
+```text
+Fib preserves s0                          # promise: caller's s0 restored on return
+Fib stack bytes 32                        # 16-byte-aligned frame
+
+moveNumberToS0 operation Move
+moveNumberToS0 destination s0
+moveNumberToS0 firstSource a0
+moveNumberToS0 writes number              # number now lives in callee-saved s0
+
+callFibNumberMinusOne operation Call
+callFibNumberMinusOne symbol fib
+callFibNumberMinusOne liveOut s0:number   # must survive the call — safe in s0
+```
+
+Save/restore is paired through a *named slot*, so there are no magic offsets to
+get wrong:
+
+```text
+SlotSavedS0 is stackSlot
+SlotSavedS0 offset 16
+SlotSavedS0 stores s0
+
+saveCallerS0 saves s0 SlotSavedS0         # prologue spill
+restoreCallerS0 restores s0 SlotSavedS0   # epilogue reload
+```
+
+Break any of it and `check` points at the exact handle:
+
+```console
+$ python -m sasm check broken_fib.sasm
+error   E-ABI-ALIGN    Fib: stack frame 24 is not 16-byte aligned
+error   E-ABI-PRESERVE Fib: reuses callee-saved s0 but it is not restored
+warning W-CLOBBER      callFibNumberMinusOne: t2 is live across this call but caller-saved (clobbered)
+```
 
 ## Examples
 
