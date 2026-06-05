@@ -79,10 +79,13 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
   - [x] **coverage cross-check** — validates the hand table against ground truth:
     73/73 real (non-pseudo) ops confirmed upstream; reports the breadth gap (~19
     ops not yet curated). Guarded by `tests/gen_test.py` (skips without the clone).
+  - [x] **structural derivation from the major opcode** — `derive()` maps the
+    `6..2` opcode → defines/uses/effect/control; **reproduces the hand table 73/73**
+    (structural fidelity, asserted by `gen_test.py`). Generated candidate table now
+    carries opcode/defines/uses/effect/control.
   - [ ] apply the PascalCase full-word naming rules (mnemonic → sem) — needs a
     curated name map (`sub`→`Subtract` isn't derivable from the mnemonic).
-  - [ ] curated **overrides** layer: effects, control kind, ABI-implicit regs
-    (`Call`/`ecall`), op-specific `base`/`offset`/`target` remap, pseudo expansions.
+  - [ ] remaining overrides: emit-template strings, op-width, pseudo expansions.
   - [ ] add a per-op `ext` column (replace `extmap.tsv` heuristic) and an
     `op-width` column (replace the derived `_op_width` in `validate.py`).
   - [ ] replace the hand table with the generated one + a regen check in CI.

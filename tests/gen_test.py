@@ -27,7 +27,13 @@ def main():
     assert upstream, "no instructions parsed from riscv-opcodes"
     missing = sorted(m for m in (generate.hand_mnemonics() - PSEUDO) if m not in upstream)
     assert not missing, f"hand-table ops not found upstream: {missing}"
-    print(f"generator coverage: OK ({len(generate.hand_mnemonics() - PSEUDO)} real ops confirmed upstream)")
+
+    # the generator must reproduce the hand table's structural columns exactly
+    matched, total, bad = generate.fidelity(upstream)
+    assert total > 0 and matched == total, f"structural fidelity mismatches: {bad}"
+
+    print(f"generator: OK ({len(generate.hand_mnemonics() - PSEUDO)} ops upstream; "
+          f"{matched}/{total} structural columns reproduced)")
     return 0
 
 
