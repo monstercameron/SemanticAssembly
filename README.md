@@ -215,6 +215,7 @@ Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, gol
 | `challenging_sum_array` | loop, real CFG, memory reads, loop-carried values |
 | `brainworms_fib` | recursion, stack frame, named slots, callee-saved save/restore, **clobber handling** |
 | `hello_world` | standalone `_start`, `.rodata` data, syscalls (`EnvironmentCall`) |
+| `sum_of_squares` | **multi-function program** — 3 functions, calls, loop with `mul`, decimal conversion with `div`/`rem`, stack buffer; prints `385` |
 
 ## Testing
 
@@ -279,8 +280,8 @@ the examples. All proven on emulated RISC-V.
 
 Honestly not done yet: the general `E-DERIVABLE` reachability linter; broader ISA
 coverage (Tiers B/V/P, planned via the official `riscv/riscv-opcodes` generator);
-and some compiler edges the examples don't exercise (multi-function files, the
-compact pipe sugar, `ordinal` ordering). See [`TODOS.md`](research/TODOS.md).
+and a couple of compiler edges the examples don't yet exercise (the compact pipe
+sugar, `ordinal` ordering). See [`TODOS.md`](research/TODOS.md).
 
 ## Design docs
 

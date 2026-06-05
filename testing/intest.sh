@@ -27,16 +27,20 @@ run fib       0 testing/harness/fib.c       examples/brainworms_fib/fib.s
 
 echo "== behavioral tests, standalone _start programs =="
 # freestanding (no libc): build with -nostdlib, check stdout + exit code
-if riscv64-linux-gnu-gcc -nostdlib -static examples/hello_world/hello.s -o /tmp/hello 2>/tmp/hello.err; then
-  out="$(qemu-riscv64-static /tmp/hello)"; code=$?
-  if [ "$code" = 0 ] && [ "$out" = "Hello from semantic assembly!" ]; then
-    echo "PASS        hello"
-  else
-    echo "FAIL        hello (exit $code, stdout: $out)"; fail=1
+standalone() {                # name  expected-stdout  source.s
+  local name=$1 want=$2 src=$3
+  if ! riscv64-linux-gnu-gcc -nostdlib -static "$src" -o "/tmp/$name" 2>"/tmp/$name.err"; then
+    echo "BUILD FAIL  $name"; sed 's/^/    /' "/tmp/$name.err"; fail=1; return
   fi
-else
-  echo "BUILD FAIL  hello"; sed 's/^/    /' /tmp/hello.err; fail=1
-fi
+  local out; out="$(qemu-riscv64-static "/tmp/$name")"; local code=$?
+  if [ "$code" = 0 ] && [ "$out" = "$want" ]; then
+    echo "PASS        $name"
+  else
+    echo "FAIL        $name (exit $code, stdout: [$out], want [$want])"; fail=1
+  fi
+}
+standalone hello          "Hello from semantic assembly!" examples/hello_world/hello.s
+standalone sum_of_squares "385"                           examples/sum_of_squares/sum_of_squares.s
 
 echo "== assemble-validity (clang-independent, gcc as assembler) =="
 for s in examples/*/*.s; do

@@ -1,0 +1,462 @@
+# sum_of_squares — a larger, multi-function program in semantic assembly.
+#
+#   _start: print_int(sum_of_squares(10)); write("\n"); exit(0)   ->  prints "385"
+#
+# Exercises: three functions + inter-function calls, an accumulator loop with
+# mul, a do-while decimal-conversion loop with div/rem, a stack digit buffer,
+# byte stores, and write/exit syscalls. All Tier-A ops.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64.syscall
+prog entry _start
+
+newline is data
+newline section rodata
+newline type Bytes
+newline value "\n"
+newline size 1
+
+stackBuffer is memoryRegion
+stackBuffer kind stack
+
+# =====================================================================
+# _start  —  drive the computation, print the result, exit
+# =====================================================================
+Start is function
+Start symbol _start
+Start visibility global
+Start abi linux.riscv64.syscall
+Start effect call
+Start effect syscall.write
+Start effect syscall.exit
+Start leaf no
+Start calls sum_of_squares
+Start calls print_int
+Start stack bytes 0
+Start purpose "Compute sum of squares 1..10, print it, exit 0"
+
+startEntry is block
+startEntry in Start
+startEntry entry yes
+startEntry terminates return
+
+startSetLimit is insn
+startSetLimit in startEntry
+startSetLimit operation LoadImmediate
+startSetLimit destination a0
+startSetLimit immediate 10
+startSetLimit purpose "argument n = 10"
+
+startCallSum is insn
+startCallSum in startEntry
+startCallSum operation Call
+startCallSum symbol sum_of_squares
+startCallSum effect call
+startCallSum arg n a0
+startCallSum purpose "a0 = sum_of_squares(10) = 385"
+
+startCallPrint is insn
+startCallPrint in startEntry
+startCallPrint operation Call
+startCallPrint symbol print_int
+startCallPrint effect call
+startCallPrint arg value a0
+startCallPrint purpose "print a0 in decimal"
+
+startNewlineNum is insn
+startNewlineNum in startEntry
+startNewlineNum operation LoadImmediate
+startNewlineNum destination a7
+startNewlineNum immediate 64
+startNewlineNum purpose "a7 = write"
+
+startNewlineFd is insn
+startNewlineFd in startEntry
+startNewlineFd operation LoadImmediate
+startNewlineFd destination a0
+startNewlineFd immediate 1
+startNewlineFd purpose "a0 = stdout"
+
+startNewlinePtr is insn
+startNewlinePtr in startEntry
+startNewlinePtr operation LoadAddress
+startNewlinePtr destination a1
+startNewlinePtr symbol newline
+startNewlinePtr purpose "a1 = &newline"
+
+startNewlineLen is insn
+startNewlineLen in startEntry
+startNewlineLen operation LoadImmediate
+startNewlineLen destination a2
+startNewlineLen immediate 1
+startNewlineLen purpose "a2 = 1"
+
+startWriteNewline is insn
+startWriteNewline in startEntry
+startWriteNewline operation EnvironmentCall
+startWriteNewline syscall write
+startWriteNewline effect syscall.write
+startWriteNewline arg fd a0
+startWriteNewline arg buffer a1
+startWriteNewline arg length a2
+startWriteNewline purpose "write(1, &newline, 1)"
+
+startExitNum is insn
+startExitNum in startEntry
+startExitNum operation LoadImmediate
+startExitNum destination a7
+startExitNum immediate 93
+startExitNum purpose "a7 = exit"
+
+startExitCode is insn
+startExitCode in startEntry
+startExitCode operation LoadImmediate
+startExitCode destination a0
+startExitCode immediate 0
+startExitCode purpose "a0 = 0"
+
+startExit is insn
+startExit in startEntry
+startExit operation EnvironmentCall
+startExit syscall exit
+startExit effect syscall.exit
+startExit arg code a0
+startExit purpose "exit(0)"
+
+# =====================================================================
+# sum_of_squares(n)  ->  1^2 + 2^2 + ... + n^2
+# =====================================================================
+limit is value
+limit type Int64
+limit meaning "upper bound n"
+accumulator is value
+accumulator type Int64
+accumulator meaning "running total (loop-carried)"
+index is value
+index type Int64
+index meaning "loop counter (loop-carried)"
+
+SumOfSquares is function
+SumOfSquares symbol sum_of_squares
+SumOfSquares visibility local
+SumOfSquares abi linux.riscv64
+SumOfSquares in limit Int64 a0
+SumOfSquares out accumulator Int64 a0
+SumOfSquares effect none
+SumOfSquares leaf yes
+SumOfSquares stack bytes 0
+SumOfSquares purpose "Return the sum of the first n squares"
+
+sosInit is block
+sosInit in SumOfSquares
+sosInit entry yes
+sosInit terminates fallthrough
+sosInit successor sosCond
+sosInit purpose "acc = 0, i = 1"
+
+sosCond is block
+sosCond in SumOfSquares
+sosCond terminates branch
+sosCond predecessor sosInit
+sosCond predecessor sosBody
+sosCond successor sosBody
+sosCond successor sosDone
+sosCond purpose "continue while i <= n"
+
+sosBody is block
+sosBody in SumOfSquares
+sosBody terminates jump
+sosBody predecessor sosCond
+sosBody successor sosCond
+sosBody purpose "acc += i*i; i++"
+
+sosDone is block
+sosDone in SumOfSquares
+sosDone terminates return
+sosDone predecessor sosCond
+sosDone purpose "move acc into the return register and return"
+
+sosInitAcc is insn
+sosInitAcc in sosInit
+sosInitAcc operation LoadImmediate
+sosInitAcc destination t0
+sosInitAcc immediate 0
+sosInitAcc writes accumulator
+sosInitAcc purpose "acc = 0"
+
+sosInitIndex is insn
+sosInitIndex in sosInit
+sosInitIndex operation LoadImmediate
+sosInitIndex destination t1
+sosInitIndex immediate 1
+sosInitIndex writes index
+sosInitIndex purpose "i = 1"
+
+sosGuard is insn
+sosGuard in sosCond
+sosGuard operation BranchLessThan
+sosGuard firstSource a0
+sosGuard secondSource t1
+sosGuard target sosDone
+sosGuard fallthrough sosBody
+sosGuard reads limit
+sosGuard reads index
+sosGuard condition "exit when n < i (i.e. i > n)"
+
+sosSquare is insn
+sosSquare in sosBody
+sosSquare operation Multiply
+sosSquare destination t2
+sosSquare firstSource t1
+sosSquare secondSource t1
+sosSquare reads index
+sosSquare purpose "t2 = i * i"
+
+sosAccumulate is insn
+sosAccumulate in sosBody
+sosAccumulate operation Add
+sosAccumulate destination t0
+sosAccumulate firstSource t0
+sosAccumulate secondSource t2
+sosAccumulate reads accumulator
+sosAccumulate writes accumulator
+sosAccumulate purpose "acc += i*i"
+
+sosAdvance is insn
+sosAdvance in sosBody
+sosAdvance operation AddImmediate
+sosAdvance destination t1
+sosAdvance firstSource t1
+sosAdvance immediate 1
+sosAdvance reads index
+sosAdvance writes index
+sosAdvance purpose "i++"
+
+sosLoop is insn
+sosLoop in sosBody
+sosLoop operation Jump
+sosLoop target sosCond
+sosLoop liveOut t0:accumulator
+sosLoop liveOut t1:index
+sosLoop purpose "back-edge; acc and i are loop-carried"
+
+sosReturnMove is insn
+sosReturnMove in sosDone
+sosReturnMove operation Move
+sosReturnMove destination a0
+sosReturnMove firstSource t0
+sosReturnMove reads accumulator
+sosReturnMove writes accumulator
+sosReturnMove purpose "return value = acc"
+
+sosReturn is insn
+sosReturn in sosDone
+sosReturn operation Return
+sosReturn returns accumulator
+sosReturn purpose "return acc"
+
+# =====================================================================
+# print_int(n)  ->  write n in decimal to stdout   (n >= 0)
+# =====================================================================
+number is value
+number type Nat64
+number signed no
+number meaning "the value being printed (consumed digit by digit)"
+pointer is value
+pointer type Address
+pointer meaning "cursor into the digit buffer (moves backward)"
+bufferEnd is value
+bufferEnd type Address
+bufferEnd meaning "one past the end of the digit buffer"
+
+PrintInt is function
+PrintInt symbol print_int
+PrintInt visibility local
+PrintInt abi linux.riscv64.syscall
+PrintInt in number Nat64 a0
+PrintInt effect syscall.write
+PrintInt leaf yes
+PrintInt stack bytes 32
+PrintInt stack align 16
+PrintInt purpose "Write n in decimal to stdout"
+
+piInit is block
+piInit in PrintInt
+piInit entry yes
+piInit terminates fallthrough
+piInit successor piLoop
+piInit purpose "allocate a 32-byte digit buffer and initialise cursors"
+
+piLoop is block
+piLoop in PrintInt
+piLoop terminates branch
+piLoop predecessor piInit
+piLoop predecessor piLoop
+piLoop successor piLoop
+piLoop successor piEmit
+piLoop purpose "do { *--p = '0' + n%10; n /= 10 } while (n != 0)"
+
+piEmit is block
+piEmit in PrintInt
+piEmit terminates return
+piEmit predecessor piLoop
+piEmit purpose "write(1, p, end - p); free frame; return"
+
+piAlloc is insn
+piAlloc in piInit
+piAlloc operation AddImmediate
+piAlloc destination stackPointer
+piAlloc firstSource stackPointer
+piAlloc immediate -32
+piAlloc effect stack.allocate
+piAlloc purpose "32-byte frame = digit buffer"
+
+piCopyN is insn
+piCopyN in piInit
+piCopyN operation Move
+piCopyN destination t0
+piCopyN firstSource a0
+piCopyN reads number
+piCopyN writes number
+piCopyN purpose "t0 = working copy of n"
+
+piTen is insn
+piTen in piInit
+piTen operation LoadImmediate
+piTen destination t1
+piTen immediate 10
+piTen purpose "divisor 10"
+
+piPtr is insn
+piPtr in piInit
+piPtr operation AddImmediate
+piPtr destination t2
+piPtr firstSource stackPointer
+piPtr immediate 32
+piPtr writes pointer
+piPtr purpose "p = buffer end (we fill backward)"
+
+piEnd is insn
+piEnd in piInit
+piEnd operation AddImmediate
+piEnd destination t4
+piEnd firstSource stackPointer
+piEnd immediate 32
+piEnd writes bufferEnd
+piEnd purpose "remember end for the length"
+
+piDigit is insn
+piDigit in piLoop
+piDigit operation RemainderUnsigned
+piDigit destination t3
+piDigit firstSource t0
+piDigit secondSource t1
+piDigit purpose "t3 = n % 10"
+
+piAscii is insn
+piAscii in piLoop
+piAscii operation AddImmediate
+piAscii destination t3
+piAscii firstSource t3
+piAscii immediate 48
+piAscii purpose "t3 += '0'"
+
+piBack is insn
+piBack in piLoop
+piBack operation AddImmediate
+piBack destination t2
+piBack firstSource t2
+piBack immediate -1
+piBack reads pointer
+piBack writes pointer
+piBack purpose "p--"
+
+piStore is insn
+piStore in piLoop
+piStore operation StoreByte
+piStore secondSource t3
+piStore base t2
+piStore offset 0
+piStore effect memory.write
+piStore memory region stackBuffer
+piStore purpose "*p = digit"
+
+piReduce is insn
+piReduce in piLoop
+piReduce operation DivideUnsigned
+piReduce destination t0
+piReduce firstSource t0
+piReduce secondSource t1
+piReduce reads number
+piReduce writes number
+piReduce purpose "n /= 10"
+
+piMore is insn
+piMore in piLoop
+piMore operation BranchIfNonzero
+piMore firstSource t0
+piMore target piLoop
+piMore fallthrough piEmit
+piMore reads number
+piMore liveOut t0:number
+piMore liveOut t2:pointer
+piMore liveOut t4:bufferEnd
+piMore condition "loop while n != 0"
+
+piWriteNum is insn
+piWriteNum in piEmit
+piWriteNum operation LoadImmediate
+piWriteNum destination a7
+piWriteNum immediate 64
+piWriteNum purpose "a7 = write"
+
+piWriteFd is insn
+piWriteFd in piEmit
+piWriteFd operation LoadImmediate
+piWriteFd destination a0
+piWriteFd immediate 1
+piWriteFd purpose "a0 = stdout"
+
+piWriteBuf is insn
+piWriteBuf in piEmit
+piWriteBuf operation Move
+piWriteBuf destination a1
+piWriteBuf firstSource t2
+piWriteBuf reads pointer
+piWriteBuf purpose "a1 = p (first digit)"
+
+piWriteLen is insn
+piWriteLen in piEmit
+piWriteLen operation Subtract
+piWriteLen destination a2
+piWriteLen firstSource t4
+piWriteLen secondSource t2
+piWriteLen reads bufferEnd
+piWriteLen reads pointer
+piWriteLen purpose "a2 = end - p (number of digits)"
+
+piWrite is insn
+piWrite in piEmit
+piWrite operation EnvironmentCall
+piWrite syscall write
+piWrite effect syscall.write
+piWrite arg fd a0
+piWrite arg buffer a1
+piWrite arg length a2
+piWrite purpose "write(1, p, len)"
+
+piFree is insn
+piFree in piEmit
+piFree operation AddImmediate
+piFree destination stackPointer
+piFree firstSource stackPointer
+piFree immediate 32
+piFree effect stack.free
+piFree purpose "free the buffer frame"
+
+piReturn is insn
+piReturn in piEmit
+piReturn operation Return
+piReturn purpose "return to caller"
