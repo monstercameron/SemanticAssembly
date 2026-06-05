@@ -12,6 +12,9 @@
                      └──emit (π)──▶  .s  ──▶  assembler ──▶  RISC-V binary
 ```
 
+📖 **Project page:** [`docs/index.html`](docs/index.html) — a visual walk through
+the idea space (enable GitHub Pages from `/docs` to publish it).
+
 ## Why
 
 Raw assembly is hard for an LLM to edit *reliably* — not because the model can't

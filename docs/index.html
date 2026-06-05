@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semantic Assembly — agent-editable RISC-V</title>
+<meta name="description" content="A thin, row-based fact layer over RISC-V assembly where every hidden assumption is made explicit and checkable. An attention-conditioning format for LLM agents.">
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#111726; --panel2:#0e1420; --ink:#e6edf3; --mut:#9aa7b8;
+    --line:#1e2troke; --line:#1f2937; --acc:#5eead4; --acc2:#7dd3fc; --warn:#fbbf24;
+    --err:#fb7185; --ok:#34d399; --code:#0a0e16; --kw:#7dd3fc; --val:#5eead4;
+    --com:#5b6b80; --rad:14px; --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.65;-webkit-font-smoothing:antialiased}
+  a{color:var(--acc2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:980px;margin:0 auto;padding:0 22px}
+  code,pre{font-family:var(--mono)}
+  /* nav */
+  nav{position:sticky;top:0;z-index:10;background:rgba(11,15,23,.82);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;gap:18px;height:56px}
+  nav .brand{font-weight:700;letter-spacing:.3px}
+  nav .brand b{color:var(--acc)}
+  nav .links{margin-left:auto;display:flex;gap:18px;flex-wrap:wrap}
+  nav .links a{color:var(--mut);font-size:14px}
+  nav .links a:hover{color:var(--ink);text-decoration:none}
+  /* hero */
+  header.hero{padding:84px 0 56px;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 500px at 70% -10%,rgba(94,234,212,.10),transparent 60%),
+               radial-gradient(900px 400px at 10% 0%,rgba(125,211,252,.08),transparent 55%)}
+  .tag{display:inline-block;font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acc);border:1px solid #1c3b39;background:#0c1a1a;padding:5px 11px;border-radius:999px}
+  h1{font-size:clamp(34px,6vw,58px);line-height:1.05;margin:18px 0 10px;letter-spacing:-.02em}
+  h1 .g{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;
+    background-clip:text;color:transparent}
+  .lede{font-size:clamp(17px,2.4vw,21px);color:var(--mut);max-width:760px}
+  .cta{margin-top:26px;display:flex;gap:12px;flex-wrap:wrap}
+  .btn{display:inline-block;padding:11px 18px;border-radius:10px;font-weight:600;font-size:15px}
+  .btn.p{background:var(--acc);color:#06211d}
+  .btn.s{border:1px solid var(--line);color:var(--ink)}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  /* sections */
+  section{padding:60px 0;border-bottom:1px solid var(--line)}
+  .kicker{color:var(--acc);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+  h2{font-size:clamp(24px,3.6vw,34px);margin:8px 0 14px;letter-spacing:-.01em}
+  h3{font-size:18px;margin:26px 0 8px}
+  p{color:#cdd6e2}
+  .mut{color:var(--mut)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rad);padding:20px}
+  .card h3{margin-top:0}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:12px;padding:16px 16px;
+    overflow:auto;font-size:13.5px;line-height:1.55;margin:14px 0}
+  pre.tight{margin:0}
+  .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+  .com{color:var(--com)}
+  .kw{color:var(--kw)}
+  .val{color:var(--val)}
+  .flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-family:var(--mono);
+    font-size:14px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;justify-content:center}
+  .flow b{color:var(--ink)}
+  .flow .ar{color:var(--acc)}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:6px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--mut);margin:2px}
+  .term{background:#05080d}
+  .term .err{color:var(--err)}
+  .term .ok{color:var(--ok)}
+  .term .pr{color:var(--acc)}
+  .codes{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .codes span{font-family:var(--mono);font-size:12px;padding:4px 9px;border-radius:7px;
+    background:var(--panel2);border:1px solid var(--line);color:#bcd}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
+  td code{color:var(--acc)}
+  .note{border-left:3px solid var(--acc);background:#0c1a1a;padding:12px 16px;border-radius:0 10px 10px 0;color:#cdd6e2}
+  ul.clean{list-style:none;padding:0;margin:14px 0}
+  ul.clean li{padding:8px 0 8px 26px;position:relative;border-bottom:1px solid var(--line)}
+  ul.clean li:before{content:"▸";position:absolute;left:4px;color:var(--acc)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  footer{padding:48px 0 70px;color:var(--mut);font-size:14px}
+  .small{font-size:13px;color:var(--mut)}
+  .status-ok{color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <span class="brand"><b>semantic</b>assembly</span>
+  <span class="links">
+    <a href="#why">Why</a>
+    <a href="#idea">The idea</a>
+    <a href="#projection">Projection</a>
+    <a href="#inclusion">What to surface</a>
+    <a href="#validator">Validator</a>
+    <a href="#proof">Proof</a>
+    <a href="#status">Status</a>
+  </span>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <span class="tag">Agentic RISC-V · research prototype</span>
+  <h1>Make assembly's hidden state<br><span class="g">explicit and checkable.</span></h1>
+  <p class="lede">A thin, row-based layer over RISC-V where register liveness, ABI
+  contracts, stack layout, memory regions, effects, and intent become explicit
+  <em>facts</em>. A compiler lowers it to ordinary <code>.s</code>; a validator
+  catches the mistakes assembly normally hides.</p>
+  <div class="cta">
+    <a class="btn p" href="#idea">See the idea →</a>
+    <a class="btn s" href="https://github.com/" id="repo">Repository</a>
+  </div>
+  <div style="margin-top:30px" class="flow">
+    <b>.sasm</b><span class="ar">→</span>parse<span class="ar">→</span><b>facts</b>
+    <span class="ar">→</span>validate<span class="ar">→</span>diagnostics
+    <span style="opacity:.4">|</span>
+    <b>facts</b><span class="ar">→</span>emit&nbsp;(π)<span class="ar">→</span><b>.s</b>
+    <span class="ar">→</span>assembler<span class="ar">→</span>RISC-V binary
+  </div>
+</div></header>
+
+<!-- WHY -->
+<section id="why"><div class="wrap">
+  <div class="kicker">The premise</div>
+  <h2>It's not that the model can't read assembly.</h2>
+  <p>Raw assembly is hard for an LLM to edit <em>reliably</em> because correctness
+  lives in <strong>long-range, implicit, stateful</strong> dependencies — exactly
+  the regime where attention degrades:</p>
+  <div class="grid2">
+    <div class="card"><h3>Which value is in <code>a1</code> here?</h3>
+      <p class="mut">It depends on every prior instruction. Reconstructing it means
+      attending across the whole function.</p></div>
+    <div class="card"><h3>What does this <code>call</code> clobber?</h3>
+      <p class="mut">An ABI contract that lives only in the programmer's head — and
+      a value left in the wrong register is silently destroyed.</p></div>
+    <div class="card"><h3>Is the frame still 16-byte aligned?</h3>
+      <p class="mut">Stack offsets are magic numbers that couple instructions
+      invisibly.</p></div>
+    <div class="card"><h3>Did this branch keep the CFG intact?</h3>
+      <p class="mut">Control flow is implicit in label position and fall-through.</p></div>
+  </div>
+  <div class="note" style="margin-top:20px"><strong>The thesis.</strong> Semantic
+  Assembly is an <em>attention-conditioning format</em>: it moves the information an
+  edit needs from <em>must-be-inferred-over-distance</em> to <em>present-locally</em>,
+  as a row the agent can address and patch — then a validator catches the cases
+  where the edit broke a contract anyway. We are not making the model smarter; we
+  are changing what its attention can do reliably.</div>
+</div></section>
+
+<!-- IDEA -->
+<section id="idea"><div class="wrap">
+  <div class="kicker">The idea</div>
+  <h2>Same instruction. Every assumption written down.</h2>
+  <p>It is <em>thin</em>: each instruction row still maps to exactly one real
+  assembler statement. But the opaque parts become facts.</p>
+  <div class="two">
+    <div>
+      <div class="lbl">raw RISC-V</div>
+      <pre class="tight"><code>add a0, a0, a1
+ret</code></pre>
+    </div>
+    <div>
+      <div class="lbl">semantic assembly (.sasm)</div>
+<pre class="tight"><code><span class="kw">left</span> is value
+<span class="kw">left</span> type Int64
+<span class="kw">right</span> is value
+<span class="kw">right</span> type Int64
+<span class="kw">result</span> is value
+<span class="kw">result</span> type Int64
+
+<span class="kw">Add2</span> is function
+<span class="kw">Add2</span> symbol add2
+<span class="kw">Add2</span> in left  Int64 a0  <span class="com"># arg arrives in a0</span>
+<span class="kw">Add2</span> in right Int64 a1
+<span class="kw">Add2</span> out result Int64 a0
+<span class="kw">Add2</span> effect none       <span class="com"># asserted: no memory/calls</span>
+
+<span class="kw">addLeftAndRight</span> is insn
+<span class="kw">addLeftAndRight</span> operation Add
+<span class="kw">addLeftAndRight</span> destination a0
+<span class="kw">addLeftAndRight</span> firstSource a0
+<span class="kw">addLeftAndRight</span> secondSource a1
+<span class="kw">addLeftAndRight</span> reads left    <span class="com"># a0 holds `left` here</span>
+<span class="kw">addLeftAndRight</span> reads right
+<span class="kw">addLeftAndRight</span> writes result
+
+<span class="kw">returnResult</span> is insn
+<span class="kw">returnResult</span> operation Return
+<span class="kw">returnResult</span> returns result</code></pre>
+    </div>
+  </div>
+  <p class="small" style="margin-top:14px">Names are full words by design —
+  <code>operation</code>/<code>destination</code>/<code>firstSource</code> (never
+  <code>op</code>/<code>rd</code>/<code>rs1</code>), descriptive instruction handles
+  (never <code>I1</code>). The audience is an agent reading and a validator checking.</p>
+</div></section>
+
+<!-- PROJECTION -->
+<section id="projection"><div class="wrap">
+  <div class="kicker">The projection</div>
+  <h2>Verbosity is free at runtime.</h2>
+  <p>Lowering is a function <code>π : .sasm → .s</code> that <em>discards</em> all
+  the context, keeping only the minimal facts that form real
+  instructions/operands/labels/data. The verbosity lives above the projection line
+  and never reaches the assembler — it costs source bytes, not code.</p>
+
+  <div class="two">
+    <div class="card">
+      <h3>Two tiers of fact</h3>
+      <ul class="clean">
+        <li><strong>Authoritative</strong> — survives <code>π</code>: the operands,
+        opcode, labels, data.</li>
+        <li><strong>Asserted (S-check)</strong> — stripped, but the validator
+        verifies it: <code>effect none</code>, <code>liveOut</code>, types.</li>
+        <li><strong>Intent (S-intent)</strong> — the irreducible <em>why</em>:
+        <code>purpose</code>, <code>meaning</code>. The only facts allowed to go
+        unchecked.</li>
+      </ul>
+      <p class="small">Invariant: strip every asserted/intent fact and the emitted
+      <code>.s</code> is byte-identical.</p>
+    </div>
+    <div>
+      <div class="lbl">π(add2.sasm)  →  exactly this</div>
+<pre class="tight"><code>	.text
+	.globl	add2
+add2:
+	add	a0, a0, a1
+	ret</code></pre>
+      <p class="small" style="margin-top:12px">Deterministic and byte-identical to
+      the hand-written golden — so an agent's edit is a minimal, reviewable
+      <code>.s</code> diff.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- INCLUSION -->
+<section id="inclusion"><div class="wrap">
+  <div class="kicker">The discipline</div>
+  <h2>Surface dangerous state — not everything.</h2>
+  <p>More facts is not the goal. A fact that merely restates what's derivable from
+  the op tables is <em>attention dilution</em>, and is forbidden. The objective is
+  to <strong>minimize the facts the model must integrate across distance</strong>.</p>
+  <div class="note">A fact earns its place <strong>iff</strong> it (1) affects
+  correctness across more than one instruction, (2) crosses a control-flow edge,
+  (3) crosses a call / syscall / ABI boundary, (4) names a memory region / stack
+  slot / aliasing assumption, (5) is required to prove a contract (effect, leaf,
+  stack, return, preserve), or (6) is irreducible intent. Otherwise: derive it,
+  don't store it.</div>
+  <h3>The sharpest case</h3>
+  <p><code>reads a1</code> is <strong>forbidden</strong> — a register use is already
+  in the op table (derivable). <code>reads left</code> is <strong>kept</strong> — it
+  asserts the register↔value binding <em>at this point</em>, the long-range fact raw
+  assembly hides. <span class="mut">Value names yes; register names no.</span></p>
+</div></section>
+
+<!-- VALIDATOR -->
+<section id="validator"><div class="wrap">
+  <div class="kicker">The payoff</div>
+  <h2>The validator is the point.</h2>
+  <p>Syntax isn't the value — <em>checking</em> is. The validator recomputes the
+  truth from authoritative facts (a CFG, forward and backward liveness, a value-flow
+  may-analysis) and judges every assertion against it. The full diagnostic catalog —
+  19 stable codes, each naming the entity handle at fault:</p>
+  <div class="codes">
+    <span>E-ISA-OPCODE</span><span>E-ISA-REG</span><span>E-ISA-FIELD</span><span>E-REF</span>
+    <span>E-IMM-RANGE</span><span>E-ORDER-MIXED</span><span>E-ABI-ALIGN</span>
+    <span>E-ABI-PRESERVE</span><span>E-LEAF</span><span>E-EFFECT</span><span>E-TYPE</span>
+    <span>W-SLOT</span><span>E-CFG-EDGE</span><span>E-LIVE-UNDEF</span><span>E-LIVE-RET</span>
+    <span>W-DEAD</span><span>W-CLOBBER</span><span>E-VALUE-FLOW</span><span>E-DERIVABLE</span>
+  </div>
+
+  <h3 style="margin-top:30px">The bug assembly hides best</h3>
+  <p>Recursive <code>fib</code> deliberately moves <code>number</code> into a
+  callee-saved register so it survives two calls. Leave it in caller-saved
+  <code>a0</code> — and the value-flow analysis catches the silent clobber:</p>
+<pre class="term"><code><span class="pr">$</span> python -m sasm check naive_fib.sasm
+<span class="err">error E-VALUE-FLOW computeNumberMinusTwo: reads number but ['a0']
+      hold ['·call:callFibNumberMinusOne:a0']</span></code></pre>
+  <p class="small">A value destroyed across a call — normally invisible — surfaced
+  mechanically, pointing at the exact instruction. That is the loop the format
+  exists for: <em>edit → validate → diagnostic (with a handle) → re-edit.</em></p>
+</div></section>
+
+<!-- PROOF -->
+<section id="proof"><div class="wrap">
+  <div class="kicker">Not a slide deck</div>
+  <h2>Proven on emulated silicon.</h2>
+  <p>Every example is a triptych — C source, the <code>.sasm</code>, and the emitted
+  <code>.s</code> — verified three ways: the compiler output is byte-identical to the
+  golden, it assembles as real RISC-V, and it <em>runs correctly</em> under
+  <code>qemu-riscv64</code>.</p>
+<pre class="term"><code><span class="pr">$</span> docker run --rm sasm-eval
+1/3 compiler snapshots ... <span class="ok">all snapshots match</span>
+2/3 validator         ... <span class="ok">all examples validate clean</span>
+3/3 behavioral (qemu) ... add2=5  sum_array=15  fib(10)=55  hello: ok
+==================== <span class="ok">ALL EVAL CHECKS PASSED</span> ====================</code></pre>
+  <table>
+    <tr><th>Example</th><th>Exercises</th></tr>
+    <tr><td><code>simple_add2</code></td><td>leaf function, ABI in/out</td></tr>
+    <tr><td><code>challenging_sum_array</code></td><td>loop, real CFG, memory reads, loop-carried values</td></tr>
+    <tr><td><code>brainworms_fib</code></td><td>recursion, stack frame, named slots, callee-saved save/restore, clobber handling</td></tr>
+    <tr><td><code>hello_world</code></td><td>standalone <code>_start</code>, <code>.rodata</code>, syscalls</td></tr>
+  </table>
+</div></section>
+
+<!-- STATUS -->
+<section id="status"><div class="wrap">
+  <div class="kicker">Honest status</div>
+  <h2>What works, and what doesn't yet.</h2>
+  <div class="two">
+    <div class="card">
+      <h3 class="status-ok">Working today</h3>
+      <ul class="clean">
+        <li>Compiler for RV64 "Tier A" (RV64I + M + Zicond + scalar atomics) — byte-identical, assembling, executing.</li>
+        <li>Validator: the entire 19-code catalog, zero false positives on the examples.</li>
+        <li>Self-contained Docker eval environment.</li>
+        <li>Pure-Python toolchain, no dependencies.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--warn)">Not done yet</h3>
+      <ul class="clean">
+        <li>General <code>E-DERIVABLE</code> reachability linter (research-grade).</li>
+        <li>Broader ISA coverage (Tiers B/V/P) via the official <code>riscv-opcodes</code> generator.</li>
+        <li>Compiler edges the examples don't exercise: multi-function files, pipe sugar, <code>ordinal</code> ordering.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note" style="margin-top:18px"><strong>It's a bet, stated as one.</strong>
+  The claim — that local, addressable facts beat inferred ones — is falsifiable.
+  The planned experiment measures agent edit-accuracy across three arms: raw
+  <code>.s</code>, raw <code>.s</code> + a prose fact comment, and <code>.sasm</code>.
+  The prediction is <code>.sasm &gt; comment &gt; raw</code>; if the structured format
+  doesn't beat a comment, it's overbuilt — a result worth knowing.</div>
+</div></section>
+
+<footer><div class="wrap">
+  <p><strong>Semantic Assembly</strong> — a research prototype. The full design
+  lives in the repository's <code>research/</code> folder:
+  <code>DESIGN.md</code> (framework &amp; projection model),
+  <code>LANGUAGE.md</code> (the fact vocabulary),
+  <code>OPCODES.md</code> (op table), and
+  <code>TODOS.md</code> (status &amp; backlog).
+  &nbsp;<a href="https://github.com/" id="repo2">View the repository →</a></p>
+  <p class="small">Built and verified end-to-end on emulated RISC-V.</p>
+</div></footer>
+
+<script>
+  // Point the repo links at the GitHub Pages owner/repo when served from
+  // *.github.io/<repo>/ ; otherwise leave the placeholder for the author to set.
+  (function(){
+    var m = location.hostname.match(/^([^.]+)\.github\.io$/);
+    if(m){
+      var repo = location.pathname.split('/').filter(Boolean)[0] || '';
+      var url = 'https://github.com/' + m[1] + (repo ? '/' + repo : '');
+      ['repo','repo2'].forEach(function(id){var a=document.getElementById(id); if(a) a.href=url;});
+    }
+  })();
+</script>
+
+</body>
+</html>
