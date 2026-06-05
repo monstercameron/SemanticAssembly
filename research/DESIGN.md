@@ -720,6 +720,8 @@ E-LEAF        `leaf yes` but a call/ecall is present
 E-CFG-EDGE    branch target not reachable / not a declared successor
 E-VALUE-FLOW  `reads/writes <value>` not satisfied by reaching-defs (§11.2 dataflow)
 E-ORDER-MIXED a block mixes ordinaled and bare insns (§11.1)
+E-LIVE-ASSERT a declared `liveOut` register is not actually live there (§13)
+W-UNREACHABLE a block has no path from the function entry
 E-TYPE        `in`/`value` Type unknown, or width inconsistent with its accesses
 E-DERIVABLE   an S-fact is reconstructable from A-facts + tables (§11 clause 2)
 W-CLOBBER     value live across a caller-saved boundary

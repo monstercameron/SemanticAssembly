@@ -182,6 +182,29 @@ def _fn_insns(prog, fn):
         yield from prog.members_of(blk.name, "insn")
 
 
+def _check_reachability(prog, fn, add) -> None:
+    """W-UNREACHABLE: a block with no path from the entry along declared
+    `successor` edges (DESIGN §13 / E-CFG-EDGE 'not reachable' half)."""
+    blocks = prog.members_of(fn.name, "block")
+    if not blocks:
+        return
+    names = {b.name for b in blocks}
+    entry = next((b for b in blocks if b.scalar("entry") == "yes"), blocks[0])
+    succ = {b.name: [s for s in b.values("successor") if s in names] for b in blocks}
+    seen = set()
+    stack = [entry.name]
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(succ[n])
+    for b in blocks:
+        if b.name not in seen:
+            add("warning", "W-UNREACHABLE", b.name,
+                f"block has no path from the entry of {fn.name}")
+
+
 def _check_value_flow(prog, fn, ops, abi, value_names, add) -> None:
     """E-VALUE-FLOW (DESIGN §11.2): a `reads`/`returns V` must be satisfied by
     reaching definitions — V must be among the values its source register *might*
@@ -224,6 +247,14 @@ def _check_value_flow(prog, fn, ops, abi, value_names, add) -> None:
                     if emit and poss and v not in poss:
                         add("error", "E-VALUE-FLOW", i.name,
                             f"reads {v} but {sorted(srcs)} hold {sorted(poss)}")
+            # `requires <value> in <reg>`: the value must occupy that register here
+            for row in i.all("requires"):
+                if len(row) >= 3 and row[1] == "in" and row[0] in value_names:
+                    v, reg = row[0], row[2]
+                    poss = st.get(reg, set())
+                    if emit and poss and v not in poss:
+                        add("error", "E-VALUE-FLOW", i.name,
+                            f"requires {v} in {reg} but {reg} holds {sorted(poss)}")
             if spec["control"] == "return":
                 for row in i.all("returns"):
                     v = row[0] if row else None
@@ -427,6 +458,14 @@ def _check_backward(prog, fn, ops, abi, add) -> None:
                 for r in sorted(real_def(i) - live_out_i - set(arg_int)):
                     add("warning", "W-DEAD", i.name,
                         f"writes {r} but it is never used before being overwritten")
+            # asserted liveOut must match computed liveness (E-LIVE-ASSERT)
+            for row in i.all("liveOut"):
+                if not row:
+                    continue
+                reg = row[0].split(":")[0]
+                if reg not in live_out_i:
+                    add("error", "E-LIVE-ASSERT", i.name,
+                        f"declares `liveOut {row[0]}` but {reg} is not live here")
             cur = (cur - full_def(i)) | use(i)
 
 
@@ -574,5 +613,6 @@ def validate(prog: Program) -> list[Diagnostic]:
         _check_liveness(prog, fn, ops, abi, regs, add)
         _check_backward(prog, fn, ops, abi, add)
         _check_value_flow(prog, fn, ops, abi, values, add)
+        _check_reachability(prog, fn, add)
 
     return diags

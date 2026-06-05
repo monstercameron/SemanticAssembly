@@ -49,22 +49,20 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - **Done-when:** a derivable fact in any example is flagged `E-DERIVABLE`; the 5
   golden examples stay clean; no false positives on intent (`purpose`/`meaning`).
 
-### A2. Validator refinements 🟡
-- [ ] **`requires <value> in <reg>`** is parsed/checked by value-flow (today only
-  `reads`/`writes`/`returns` feed `E-VALUE-FLOW`). — `validate.py` `_check_value_flow`.
-- [ ] **Value-level `W-CLOBBER`** — today's `W-CLOBBER` is register-level; the
-  value-level clobber (a *named value* destroyed across a call) is caught only by
-  `E-VALUE-FLOW`. Decide whether to merge/clarify the two. — DESIGN §13/§11.2.
-- [ ] **Asserted `liveIn`/`liveOut` mismatch** — validate declared liveness facts
-  against the computed fixpoint (today they're documentation, never checked). New
-  code, e.g. `E-LIVE-ASSERT`. — `validate.py`, DESIGN §13 step 5.
-- [ ] **Unreachable-block detection** — CFG nodes with no path from entry. New
-  warning `W-UNREACHABLE`. — `validate.py`.
-- [ ] **`E-CFG-EDGE` "not reachable" half** — currently only the
-  declared-successor cross-check is wired; the reachability half is not.
-- [ ] **Diagnostics fix-site** — handle + stable code are emitted; the *candidate
-  fix site* ("nearest def is X") is only in some messages. Make it uniform. —
-  DESIGN §5.1/§14.
+### A2. Validator refinements 🟡 — ✅ MOSTLY DONE
+- [x] **`requires <value> in <reg>`** checked by value-flow (`_check_value_flow`):
+  the value must occupy that register here, else `E-VALUE-FLOW`.
+- [x] **Asserted `liveOut` mismatch** — `E-LIVE-ASSERT`: a declared `liveOut`
+  register must be live there per the backward fixpoint (`_check_backward`).
+- [x] **Unreachable-block detection** — `W-UNREACHABLE` (`_check_reachability`):
+  BFS from entry along declared `successor` edges; covers the `E-CFG-EDGE`
+  "not reachable" half.
+- [x] tests: `tests/refine_test.py` (all three fire); examples stay clean.
+- [~] **Value-level `W-CLOBBER`** — *decision:* keep the split. Register-level
+  clobber = `W-CLOBBER`; value-level clobber (a named value destroyed across a
+  call) = `E-VALUE-FLOW`. No merge; documented here.
+- [ ] **Diagnostics fix-site uniformity** — handle + code everywhere; the
+  "nearest def is X" hint is only on some messages. Polish later (DESIGN §5.1).
 
 ## B. ISA breadth — beyond Tier A (the big one)
 
