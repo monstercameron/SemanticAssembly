@@ -1,0 +1,59 @@
+# add2(left, right) = left + right   --   leaf, register-only, no stack.
+#
+# TUTORIAL example. It deliberately surfaces value bindings (`reads left`) even
+# though they are adjacent/local — which the inclusion rule (LANGUAGE §0.5) would
+# normally OMIT, because nothing here crosses an instruction, block, call, slot,
+# or memory boundary. A real (non-tutorial) file would drop them.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+left is value
+left type Int64
+left signed yes
+left meaning "first addend"
+
+right is value
+right type Int64
+right signed yes
+right meaning "second addend"
+
+result is value
+result type Int64
+result meaning "left + right"
+
+Add2 is function
+Add2 symbol add2
+Add2 visibility global
+Add2 abi linux.riscv64
+Add2 in left Int64 a0
+Add2 in right Int64 a1
+Add2 out result Int64 a0
+Add2 effect none
+Add2 leaf yes
+Add2 stack bytes 0
+Add2 purpose "Return left + right"
+
+Entry is block
+Entry in Add2
+Entry entry yes
+Entry terminates return
+
+addLeftAndRight is insn
+addLeftAndRight in Entry
+addLeftAndRight operation Add
+addLeftAndRight destination a0
+addLeftAndRight firstSource a0
+addLeftAndRight secondSource a1
+addLeftAndRight reads left
+addLeftAndRight reads right
+addLeftAndRight writes result
+addLeftAndRight purpose "result = left + right, placed directly in the return register"
+
+returnResult is insn
+returnResult in Entry
+returnResult operation Return
+returnResult returns result
+returnResult purpose "Hand result back to the caller"

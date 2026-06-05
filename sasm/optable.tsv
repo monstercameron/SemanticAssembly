@@ -1,0 +1,85 @@
+sem	mnemonic	class	fmt	defines	uses	effect	control	tier	emit	meaning
+Add	add	arith	R	destination	firstSource,secondSource	none	seq	A	add {destination}, {firstSource}, {secondSource}	destination = firstSource + secondSource
+Subtract	sub	arith	R	destination	firstSource,secondSource	none	seq	A	sub {destination}, {firstSource}, {secondSource}	destination = firstSource - secondSource
+AddImmediate	addi	arith	I	destination	firstSource	none	seq	A	addi {destination}, {firstSource}, {immediate}	destination = firstSource + immediate
+AddWord	addw	arith	R	destination	firstSource,secondSource	none	seq	A	addw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource + secondSource)
+SubtractWord	subw	arith	R	destination	firstSource,secondSource	none	seq	A	subw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource - secondSource)
+AddImmediateWord	addiw	arith	I	destination	firstSource	none	seq	A	addiw {destination}, {firstSource}, {immediate}	destination = signExtend32(firstSource + immediate)
+And	and	logic	R	destination	firstSource,secondSource	none	seq	A	and {destination}, {firstSource}, {secondSource}	destination = firstSource and secondSource
+Or	or	logic	R	destination	firstSource,secondSource	none	seq	A	or {destination}, {firstSource}, {secondSource}	destination = firstSource or secondSource
+ExclusiveOr	xor	logic	R	destination	firstSource,secondSource	none	seq	A	xor {destination}, {firstSource}, {secondSource}	destination = firstSource exclusiveOr secondSource
+AndImmediate	andi	logic	I	destination	firstSource	none	seq	A	andi {destination}, {firstSource}, {immediate}	destination = firstSource and immediate
+OrImmediate	ori	logic	I	destination	firstSource	none	seq	A	ori {destination}, {firstSource}, {immediate}	destination = firstSource or immediate
+ExclusiveOrImmediate	xori	logic	I	destination	firstSource	none	seq	A	xori {destination}, {firstSource}, {immediate}	destination = firstSource exclusiveOr immediate
+ShiftLeftLogical	sll	shift	R	destination	firstSource,secondSource	none	seq	A	sll {destination}, {firstSource}, {secondSource}	destination = firstSource shiftedLeftBy (secondSource and 63)
+ShiftRightLogical	srl	shift	R	destination	firstSource,secondSource	none	seq	A	srl {destination}, {firstSource}, {secondSource}	destination = firstSource shiftedRightLogicalBy (secondSource and 63)
+ShiftRightArithmetic	sra	shift	R	destination	firstSource,secondSource	none	seq	A	sra {destination}, {firstSource}, {secondSource}	destination = firstSource shiftedRightArithmeticBy (secondSource and 63)
+ShiftLeftLogicalImmediate	slli	shift	I	destination	firstSource	none	seq	A	slli {destination}, {firstSource}, {immediate}	destination = firstSource shiftedLeftBy immediate
+ShiftRightLogicalImmediate	srli	shift	I	destination	firstSource	none	seq	A	srli {destination}, {firstSource}, {immediate}	destination = firstSource shiftedRightLogicalBy immediate
+ShiftRightArithmeticImmediate	srai	shift	I	destination	firstSource	none	seq	A	srai {destination}, {firstSource}, {immediate}	destination = firstSource shiftedRightArithmeticBy immediate
+SetLessThan	slt	compare	R	destination	firstSource,secondSource	none	seq	A	slt {destination}, {firstSource}, {secondSource}	destination = (firstSource lessThanSigned secondSource) ? 1 : 0
+SetLessThanUnsigned	sltu	compare	R	destination	firstSource,secondSource	none	seq	A	sltu {destination}, {firstSource}, {secondSource}	destination = (firstSource lessThanUnsigned secondSource) ? 1 : 0
+SetLessThanImmediate	slti	compare	I	destination	firstSource	none	seq	A	slti {destination}, {firstSource}, {immediate}	destination = (firstSource lessThanSigned immediate) ? 1 : 0
+SetLessThanImmediateUnsigned	sltiu	compare	I	destination	firstSource	none	seq	A	sltiu {destination}, {firstSource}, {immediate}	destination = (firstSource lessThanUnsigned immediate) ? 1 : 0
+Multiply	mul	muldiv	R	destination	firstSource,secondSource	none	seq	A	mul {destination}, {firstSource}, {secondSource}	destination = lowBits(firstSource times secondSource)
+MultiplyHighSigned	mulh	muldiv	R	destination	firstSource,secondSource	none	seq	A	mulh {destination}, {firstSource}, {secondSource}	destination = highBits(signed firstSource times signed secondSource)
+MultiplyHighSignedUnsigned	mulhsu	muldiv	R	destination	firstSource,secondSource	none	seq	A	mulhsu {destination}, {firstSource}, {secondSource}	destination = highBits(signed firstSource times unsigned secondSource)
+MultiplyHighUnsigned	mulhu	muldiv	R	destination	firstSource,secondSource	none	seq	A	mulhu {destination}, {firstSource}, {secondSource}	destination = highBits(unsigned firstSource times unsigned secondSource)
+Divide	div	muldiv	R	destination	firstSource,secondSource	none	seq	A	div {destination}, {firstSource}, {secondSource}	destination = firstSource dividedBySigned secondSource
+DivideUnsigned	divu	muldiv	R	destination	firstSource,secondSource	none	seq	A	divu {destination}, {firstSource}, {secondSource}	destination = firstSource dividedByUnsigned secondSource
+Remainder	rem	muldiv	R	destination	firstSource,secondSource	none	seq	A	rem {destination}, {firstSource}, {secondSource}	destination = firstSource remainderSigned secondSource
+RemainderUnsigned	remu	muldiv	R	destination	firstSource,secondSource	none	seq	A	remu {destination}, {firstSource}, {secondSource}	destination = firstSource remainderUnsigned secondSource
+MultiplyWord	mulw	muldiv	R	destination	firstSource,secondSource	none	seq	A	mulw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource times secondSource)
+DivideWord	divw	muldiv	R	destination	firstSource,secondSource	none	seq	A	divw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource dividedBySigned secondSource)
+DivideWordUnsigned	divuw	muldiv	R	destination	firstSource,secondSource	none	seq	A	divuw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource dividedByUnsigned secondSource)
+RemainderWord	remw	muldiv	R	destination	firstSource,secondSource	none	seq	A	remw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource remainderSigned secondSource)
+RemainderWordUnsigned	remuw	muldiv	R	destination	firstSource,secondSource	none	seq	A	remuw {destination}, {firstSource}, {secondSource}	destination = signExtend32(firstSource remainderUnsigned secondSource)
+ConditionalZeroIfZero	czero.eqz	cond	R	destination	firstSource,secondSource	none	seq	A	czero.eqz {destination}, {firstSource}, {secondSource}	destination = (secondSource equals 0) ? 0 : firstSource
+ConditionalZeroIfNonzero	czero.nez	cond	R	destination	firstSource,secondSource	none	seq	A	czero.nez {destination}, {firstSource}, {secondSource}	destination = (secondSource notEquals 0) ? 0 : firstSource
+LoadByte	lb	load	I	destination	base	memory.read	seq	A	lb {destination}, {offset}({base})	destination = signExtend8(memory[base + offset])
+LoadHalfword	lh	load	I	destination	base	memory.read	seq	A	lh {destination}, {offset}({base})	destination = signExtend16(memory[base + offset])
+LoadWord	lw	load	I	destination	base	memory.read	seq	A	lw {destination}, {offset}({base})	destination = signExtend32(memory[base + offset])
+LoadDoubleword	ld	load	I	destination	base	memory.read	seq	A	ld {destination}, {offset}({base})	destination = memory64[base + offset]
+LoadByteUnsigned	lbu	load	I	destination	base	memory.read	seq	A	lbu {destination}, {offset}({base})	destination = zeroExtend8(memory[base + offset])
+LoadHalfwordUnsigned	lhu	load	I	destination	base	memory.read	seq	A	lhu {destination}, {offset}({base})	destination = zeroExtend16(memory[base + offset])
+LoadWordUnsigned	lwu	load	I	destination	base	memory.read	seq	A	lwu {destination}, {offset}({base})	destination = zeroExtend32(memory[base + offset])
+StoreByte	sb	store	S	-	secondSource,base	memory.write	seq	A	sb {secondSource}, {offset}({base})	memory[base + offset] = lowByte(secondSource)
+StoreHalfword	sh	store	S	-	secondSource,base	memory.write	seq	A	sh {secondSource}, {offset}({base})	memory[base + offset] = lowHalfword(secondSource)
+StoreWord	sw	store	S	-	secondSource,base	memory.write	seq	A	sw {secondSource}, {offset}({base})	memory[base + offset] = lowWord(secondSource)
+StoreDoubleword	sd	store	S	-	secondSource,base	memory.write	seq	A	sd {secondSource}, {offset}({base})	memory64[base + offset] = secondSource
+LoadUpperImmediate	lui	const	U	destination	-	none	seq	A	lui {destination}, {immediate}	destination = signExtend32(immediate shiftedLeftBy 12)
+AddUpperImmediateToProgramCounter	auipc	const	U	destination	-	none	seq	A	auipc {destination}, {immediate}	destination = programCounter + signExtend32(immediate shiftedLeftBy 12)
+BranchEqual	beq	branch	B	-	firstSource,secondSource	none	branch	A	beq {firstSource}, {secondSource}, {target}	if firstSource equals secondSource goto target
+BranchNotEqual	bne	branch	B	-	firstSource,secondSource	none	branch	A	bne {firstSource}, {secondSource}, {target}	if firstSource notEquals secondSource goto target
+BranchLessThan	blt	branch	B	-	firstSource,secondSource	none	branch	A	blt {firstSource}, {secondSource}, {target}	if firstSource lessThanSigned secondSource goto target
+BranchGreaterOrEqual	bge	branch	B	-	firstSource,secondSource	none	branch	A	bge {firstSource}, {secondSource}, {target}	if firstSource greaterOrEqualSigned secondSource goto target
+BranchLessThanUnsigned	bltu	branch	B	-	firstSource,secondSource	none	branch	A	bltu {firstSource}, {secondSource}, {target}	if firstSource lessThanUnsigned secondSource goto target
+BranchGreaterOrEqualUnsigned	bgeu	branch	B	-	firstSource,secondSource	none	branch	A	bgeu {firstSource}, {secondSource}, {target}	if firstSource greaterOrEqualUnsigned secondSource goto target
+JumpAndLink	jal	jump	J	destination	-	none	call	A	jal {destination}, {target}	destination = programCounter + 4; goto target
+JumpAndLinkRegister	jalr	jump	I	destination	firstSource	none	call	A	jalr {destination}, {offset}({firstSource})	destination = programCounter + 4; goto firstSource + offset
+LoadImmediate	li	pseudo	pseudo	destination	-	none	seq	A	li {destination}, {immediate}	destination = immediate
+LoadAddress	la	pseudo	pseudo	destination	-	none	seq	A	la {destination}, {symbol}	destination = addressOf symbol
+Move	mv	pseudo	pseudo	destination	firstSource	none	seq	A	mv {destination}, {firstSource}	destination = firstSource
+NoOperation	nop	pseudo	pseudo	-	-	none	seq	A	nop	no operation
+Jump	j	pseudo	pseudo	-	-	none	jump	A	j {target}	goto target
+JumpRegister	jr	pseudo	pseudo	-	firstSource	none	jump	A	jr {firstSource}	goto firstSource
+Call	call	pseudo	pseudo	returnAddress	-	none	call	A	call {symbol}	returnAddress = programCounter + 4; goto symbol
+TailCall	tail	pseudo	pseudo	-	-	none	jump	A	tail {symbol}	goto symbol without link
+Return	ret	pseudo	pseudo	-	returnAddress	none	return	A	ret	goto returnAddress
+BranchIfZero	beqz	pseudo	pseudo	-	firstSource	none	branch	A	beqz {firstSource}, {target}	if firstSource equals 0 goto target
+BranchIfNonzero	bnez	pseudo	pseudo	-	firstSource	none	branch	A	bnez {firstSource}, {target}	if firstSource notEquals 0 goto target
+EnvironmentCall	ecall	system	I	-	-	syscall	syscall	A	ecall	trap to environment for a system call
+EnvironmentBreak	ebreak	system	I	-	-	trap	seq	A	ebreak	trap to the debugger
+Fence	fence	system	I	-	-	fence	seq	A	fence	order memory accesses
+LoadReserved	lr.d	atomic	R	destination	base	memory.read	seq	A	lr.d {destination}, ({base})	destination = memory64[base]; register a reservation on that address
+StoreConditional	sc.d	atomic	R	destination	secondSource,base	memory.write	seq	A	sc.d {destination}, {secondSource}, ({base})	if reservation valid: memory64[base] = secondSource, destination = 0; else destination = 1
+AtomicSwap	amoswap.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amoswap.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = secondSource (atomic)
+AtomicAdd	amoadd.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amoadd.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = destination + secondSource (atomic)
+AtomicAnd	amoand.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amoand.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = destination and secondSource (atomic)
+AtomicOr	amoor.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amoor.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = destination or secondSource (atomic)
+AtomicExclusiveOr	amoxor.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amoxor.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = destination exclusiveOr secondSource (atomic)
+AtomicMaximumSigned	amomax.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amomax.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = maximumSigned(destination, secondSource) (atomic)
+AtomicMinimumSigned	amomin.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amomin.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = minimumSigned(destination, secondSource) (atomic)
+AtomicMaximumUnsigned	amomaxu.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amomaxu.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = maximumUnsigned(destination, secondSource) (atomic)
+AtomicMinimumUnsigned	amominu.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amominu.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = minimumUnsigned(destination, secondSource) (atomic)
+AtomicCompareAndSwap	amocas.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amocas.d {destination}, {secondSource}, ({base})	if memory64[base] equals destination: memory64[base] = secondSource; destination = original memory value (Zacas)

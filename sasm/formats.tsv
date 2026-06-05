@@ -1,0 +1,9 @@
+fmt	immbits	signed	immmin	immmax	align	note
+R	-	-	-	-	1	no immediate
+I	12	yes	-2048	2047	1	I-type signed 12-bit immediate
+S	12	yes	-2048	2047	1	store offset, signed 12-bit
+B	13	yes	-4096	4094	2	branch offset, 2-byte aligned, +/-4 KiB
+U	20	no	0	1048575	1	upper 20 bits (value is imm << 12)
+J	21	yes	-1048576	1048574	2	jump offset, 2-byte aligned, +/-1 MiB
+shamt6	6	no	0	63	1	RV64 shift amount (used by ShiftLeftLogicalImmediate, etc.)
+pseudo	-	-	-	-	1	immediate range depends on the chosen expansion

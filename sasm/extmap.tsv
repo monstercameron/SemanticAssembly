@@ -1,0 +1,15 @@
+class	extension	note
+arith	I	base integer
+logic	I	base integer
+shift	I	base integer
+compare	I	base integer
+const	I	base integer
+load	I	base integer
+store	I	base integer
+branch	I	base integer
+jump	I	base integer
+pseudo	I	expands to base-integer instructions
+system	I	ecall/ebreak/fence (fence is Zifencei-adjacent; base for our purposes)
+muldiv	M	integer multiply/divide
+cond	Zicond	integer conditional operations
+atomic	A	atomic memory operations (Zaamo/Zalrsc/Zacas)

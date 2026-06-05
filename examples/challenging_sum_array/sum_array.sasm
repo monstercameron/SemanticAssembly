@@ -1,0 +1,185 @@
+# sum_array(data, count) = sum of data[0..count)   --   loop, memory, real CFG.
+#
+# Inclusion rule (LANGUAGE §0.5) applied:
+#   SURFACE  sum, index  -> loop-carried, cross the back-edge (the dangerous values)
+#   SURFACE  data, count -> loop-invariant but live across every iteration
+#   DROP     the byte offset / element address / loaded element -> adjacent scratch,
+#            consumed by the very next instruction; naming them would be dilution.
+# Register plan: a0=data(&return), a1=count, t0=sum, t1=index, t2..t4 scratch.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+inputArray is memoryRegion
+inputArray kind heap
+inputArray volatile no
+
+data is value
+data type Int64Pointer
+data meaning "base of the array to sum"
+
+count is value
+count type Nat64
+count signed no
+count meaning "number of elements"
+
+index is value
+index type Nat64
+index signed no
+index meaning "loop index (loop-carried)"
+
+sum is value
+sum type Int64
+sum meaning "running total (loop-carried, becomes the return value)"
+
+SumArray is function
+SumArray symbol sum_array
+SumArray visibility global
+SumArray abi linux.riscv64
+SumArray in data Int64Pointer a0
+SumArray in count Nat64 a1
+SumArray out sum Int64 a0
+SumArray effect memory.read inputArray
+SumArray leaf yes
+SumArray stack bytes 0
+SumArray purpose "Return the sum of count 64-bit elements at data"
+
+# ---- control-flow graph ----
+
+Prologue is block
+Prologue in SumArray
+Prologue entry yes
+Prologue terminates fallthrough
+Prologue successor Condition
+Prologue purpose "Zero the accumulator and index"
+
+Condition is block
+Condition in SumArray
+Condition terminates branch
+Condition predecessor Prologue
+Condition predecessor Body
+Condition successor Body
+Condition successor Done
+Condition purpose "Loop guard: continue while index < count"
+
+Body is block
+Body in SumArray
+Body terminates jump
+Body predecessor Condition
+Body successor Condition
+Body purpose "Accumulate data[index] and advance index"
+
+Done is block
+Done in SumArray
+Done terminates return
+Done predecessor Condition
+Done purpose "Move the sum into the return register and return"
+
+# ---- prologue ----
+
+initializeSum is insn
+initializeSum in Prologue
+initializeSum operation LoadImmediate
+initializeSum destination t0
+initializeSum immediate 0
+initializeSum writes sum
+initializeSum purpose "sum = 0"
+
+initializeIndex is insn
+initializeIndex in Prologue
+initializeIndex operation LoadImmediate
+initializeIndex destination t1
+initializeIndex immediate 0
+initializeIndex writes index
+initializeIndex purpose "index = 0"
+
+# ---- condition (loop header) ----
+
+loopGuard is insn
+loopGuard in Condition
+loopGuard operation BranchGreaterOrEqual
+loopGuard firstSource t1
+loopGuard secondSource a1
+loopGuard target Done
+loopGuard fallthrough Body
+loopGuard reads index
+loopGuard reads count
+loopGuard condition "exit when index >= count"
+
+# ---- body ----
+
+computeByteOffset is insn
+computeByteOffset in Body
+computeByteOffset operation ShiftLeftLogicalImmediate
+computeByteOffset destination t2
+computeByteOffset firstSource t1
+computeByteOffset immediate 3
+computeByteOffset reads index
+computeByteOffset purpose "t2 = index * 8 (byte offset; adjacent scratch, not named)"
+
+computeElementAddress is insn
+computeElementAddress in Body
+computeElementAddress operation Add
+computeElementAddress destination t3
+computeElementAddress firstSource a0
+computeElementAddress secondSource t2
+computeElementAddress reads data
+computeElementAddress purpose "t3 = &data[index] (adjacent scratch address)"
+
+loadElement is insn
+loadElement in Body
+loadElement operation LoadDoubleword
+loadElement destination t4
+loadElement base t3
+loadElement offset 0
+loadElement effect memory.read
+loadElement memory region inputArray
+loadElement memory type Int64
+loadElement purpose "t4 = data[index] (adjacent scratch element)"
+
+accumulate is insn
+accumulate in Body
+accumulate operation Add
+accumulate destination t0
+accumulate firstSource t0
+accumulate secondSource t4
+accumulate reads sum
+accumulate writes sum
+accumulate purpose "sum += data[index]"
+
+advanceIndex is insn
+advanceIndex in Body
+advanceIndex operation AddImmediate
+advanceIndex destination t1
+advanceIndex firstSource t1
+advanceIndex immediate 1
+advanceIndex reads index
+advanceIndex writes index
+advanceIndex purpose "index++"
+
+loopBackEdge is insn
+loopBackEdge in Body
+loopBackEdge operation Jump
+loopBackEdge target Condition
+loopBackEdge liveOut t0:sum
+loopBackEdge liveOut t1:index
+loopBackEdge purpose "Back-edge: sum and index are loop-carried into the next iteration"
+
+# ---- done ----
+
+moveSumToResult is insn
+moveSumToResult in Done
+moveSumToResult operation Move
+moveSumToResult destination a0
+moveSumToResult firstSource t0
+moveSumToResult reads sum
+moveSumToResult writes sum
+moveSumToResult purpose "Rebind sum into the return register a0"
+
+returnSum is insn
+returnSum in Done
+returnSum operation Return
+returnSum returns sum
+returnSum purpose "Hand the sum back to the caller"

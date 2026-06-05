@@ -1,0 +1,91 @@
+# hello — standalone _start program: write() a message, then exit(0).
+# Exercises the data section (.rodata / .ascii) and the syscall path
+# (EnvironmentCall with arg bindings), which the function examples don't.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64.syscall
+prog entry _start
+
+stdoutMessage is data
+stdoutMessage section rodata
+stdoutMessage type Bytes
+stdoutMessage value "Hello from semantic assembly!\n"
+stdoutMessage size 30
+
+Start is function
+Start symbol _start
+Start visibility global
+Start abi linux.riscv64.syscall
+Start effect syscall.write
+Start effect syscall.exit
+Start leaf yes
+Start stack bytes 0
+Start purpose "Write a message to stdout and exit cleanly"
+
+Entry is block
+Entry in Start
+Entry entry yes
+Entry terminates return
+
+setWriteSyscall is insn
+setWriteSyscall in Entry
+setWriteSyscall operation LoadImmediate
+setWriteSyscall destination a7
+setWriteSyscall immediate 64
+setWriteSyscall purpose "a7 = 64 (Linux write syscall number)"
+
+setStdoutFd is insn
+setStdoutFd in Entry
+setStdoutFd operation LoadImmediate
+setStdoutFd destination a0
+setStdoutFd immediate 1
+setStdoutFd purpose "a0 = 1 (stdout file descriptor)"
+
+loadMessagePointer is insn
+loadMessagePointer in Entry
+loadMessagePointer operation LoadAddress
+loadMessagePointer destination a1
+loadMessagePointer symbol stdoutMessage
+loadMessagePointer purpose "a1 = &stdoutMessage (buffer)"
+
+setMessageLength is insn
+setMessageLength in Entry
+setMessageLength operation LoadImmediate
+setMessageLength destination a2
+setMessageLength immediate 30
+setMessageLength purpose "a2 = 30 (message length in bytes)"
+
+doWrite is insn
+doWrite in Entry
+doWrite operation EnvironmentCall
+doWrite syscall write
+doWrite arg fd a0
+doWrite arg buffer a1
+doWrite arg length a2
+doWrite effect syscall.write
+doWrite memory region stdoutMessage
+doWrite purpose "write(1, &stdoutMessage, 30)"
+
+setExitSyscall is insn
+setExitSyscall in Entry
+setExitSyscall operation LoadImmediate
+setExitSyscall destination a7
+setExitSyscall immediate 93
+setExitSyscall purpose "a7 = 93 (Linux exit syscall number)"
+
+setExitCode is insn
+setExitCode in Entry
+setExitCode operation LoadImmediate
+setExitCode destination a0
+setExitCode immediate 0
+setExitCode purpose "a0 = 0 (exit code)"
+
+doExit is insn
+doExit in Entry
+doExit operation EnvironmentCall
+doExit syscall exit
+doExit arg code a0
+doExit effect syscall.exit
+doExit purpose "exit(0)"

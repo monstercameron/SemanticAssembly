@@ -1,0 +1,12 @@
+name	number	args	return	kind
+read	63	a0 a1 a2	a0	io
+write	64	a0 a1 a2	a0	io
+openat	56	a0 a1 a2 a3	a0	file
+close	57	a0	a0	file
+lseek	62	a0 a1 a2	a0	file
+fstat	80	a0 a1	a0	file
+brk	214	a0	a0	memory
+mmap	222	a0 a1 a2 a3 a4 a5	a0	memory
+munmap	215	a0 a1	a0	memory
+exit	93	a0	-	process
+exit_group	94	a0	-	process

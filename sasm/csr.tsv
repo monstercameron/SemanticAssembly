@@ -1,0 +1,14 @@
+name	number	access	sideEffect	note
+fflags	0x001	readWrite	fp.flags	accrued FP exception flags
+frm	0x002	readWrite	none	FP dynamic rounding mode
+fcsr	0x003	readWrite	fp.flags	frm and fflags combined
+cycle	0xC00	readOnly	none	cycle counter (Zicntr)
+time	0xC01	readOnly	none	wall-clock timer (Zicntr)
+instret	0xC02	readOnly	none	instructions-retired counter (Zicntr)
+vstart	0x008	readWrite	none	vector start index
+vxsat	0x009	readWrite	none	vector fixed-point saturation flag
+vxrm	0x00A	readWrite	none	vector fixed-point rounding mode
+vcsr	0x00F	readWrite	none	vxrm and vxsat combined
+vl	0xC20	readOnly	none	vector length
+vtype	0xC21	readOnly	none	vector type configuration
+vlenb	0xC22	readOnly	none	vector register length in bytes
