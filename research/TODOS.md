@@ -21,8 +21,10 @@ partial or design-only · `[ ]` no construct yet.
 
 Vocabulary lives in `LANGUAGE.md`; ops in `OPCODES.md`/`optable.tsv`; data in
 `regs.tsv`, `abi.tsv`, `formats.tsv`, `extmap.tsv`, `syscalls.tsv`, `csr.tsv`.
-Guiding principle (DESIGN §2.1): verbosity is free — when in doubt, make it a
-fact. Authoritative facts must still lower away cleanly (§11 invariant).
+Guiding principle (DESIGN §2.1): token cost is accepted — but every fact must be
+consumed (A), a checkable contract (S-check), or marked intent (S-intent). **No
+fact is silently believed.** Authoritative facts must still lower away cleanly
+(§11 invariant).
 
 ---
 
@@ -39,9 +41,10 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
   an `effect memory.read` that merely restates the op-table effect with no region;
   a `terminates`/`control` value the op table already implies; a `liveOut` equal to
   the computed liveness; a `purpose`-free assertion that adds nothing.
-- **Why:** DESIGN §11 clause 2 ("no dead weight / no attention dilution") is the
-  load-bearing guarantee of the whole thesis; today it is enforced only by author
-  discipline. This is the single most important missing validator.
+- **Why:** DESIGN §11 clause 2 ("no unchecked copies — no fact silently
+  believed") is the load-bearing guarantee of the whole thesis; today it is
+  enforced only by author discipline. This is the single most important missing
+  validator.
 - **Where:** `sasm/validate.py`; DESIGN §11 (clause 2), §11.2.
 - **Hard part:** it's a *reachability* question, not syntactic — "could a tool
   reproduce this fact from A-facts + op/abi/regs tables + the §13 dataflow?" Needs
@@ -63,6 +66,51 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
   call) = `E-VALUE-FLOW`. No merge; documented here.
 - [ ] **Diagnostics fix-site uniformity** — handle + code everywhere; the
   "nearest def is X" hint is only on some messages. Polish later (DESIGN §5.1).
+
+### A3. Close the silent edges 🟡 ⚠ each verified by probe (2026-06-09)
+Every item below is a **specified-but-unenforced** rule (DESIGN §14 ◌ codes;
+LANGUAGE §10.5). Each was empirically confirmed to fail silently or crash.
+Priority order = blast radius.
+
+- [x] **`E-CFG-LAYOUT`: fall-through adjacency** — ✅ DONE (gauntlet shakedown,
+  2026-06-09): `_check_layout` enforces all four clauses (adjacency, rows after
+  the terminator, running off the last block, entry-block targets). A noreturn
+  syscall (`return -` in syscalls.tsv) counts as a terminator of kind `syscall`
+  — which exposed and fixed four stale `terminates return` facts in shipped
+  examples. The reorder probe now errors. Regression: `tests/test_gauntlet_shakedown.py`.
+- [ ] **`E-DUP`: duplicate single-valued facts** — *verified:* a second
+  `destination` row is silently dead (first wins), so an append-style agent
+  edit does nothing. Also: re-`is` declarations (silently re-type today),
+  case-insensitive block-handle collisions (`.L` labels are lowercased +
+  file-scoped), function/data/symbol label collisions.
+- [~] **`E-CFG-EDGE` exactness** — `terminates` cross-check ✅ DONE (in
+  `_check_layout`); still open: a declared `successor` the terminator cannot
+  take passes silently (widens every dataflow merge) + `predecessor` inverse.
+- [~] **Targeted entry block** — validator half ✅ DONE (`E-CFG-LAYOUT` rejects
+  it at check time); still open: implement the §15.1 label rule in `emit.py`
+  so the construct becomes legal instead of rejected.
+- [ ] **`E-DATA`** — *verified:* bss without `size` emits `.zero None`. Full
+  contract in LANGUAGE §6.
+- [ ] **`E-ORDER-KEY`** — *verified:* `ordinal ten` crashes emission with a
+  Python traceback. Validate integer-ness + per-block uniqueness.
+- [ ] **`E-PARSE` unterminated string** — *verified:* silently consumes to EOL.
+- [ ] **`clobbers` narrowing honored by liveness/value-flow** — today written
+  `clobbers` facts change no diagnostic (LANGUAGE §3 honesty note).
+- [ ] **`saves`/`restores` slot pairing + per-return-path completeness** —
+  set-wise check passes a function that restores on only one of two return
+  paths.
+- [ ] **`stack bytes` vs actual prologue** — `stack bytes 32` with
+  `addi sp, sp, -16` passes today (DESIGN §11 promises the cross-check).
+- [ ] **Region/effect-qualifier `E-REF`** — `memory region <typo>` and
+  `effect memory.write <typo>` are unvalidated names today.
+- [ ] **`writes` with `zero` destination** — silently inert binding today.
+- [ ] Remaining §10.5 rows (`liveIn`/`liveAcross`/`clobberRisk`/`kills`/
+  `valueBindings complete`, `syscall` table check, `E-EXT-UNAVAILABLE`) — each
+  gains its check **or is demoted to S-intent / removed**; none may stay
+  unchecked-but-trusted.
+- **Done-when:** every probe in the 2026-06-09 audit produces a diagnostic (or
+  a documented demotion); `tests/` gains a regression file per probe; the
+  §10.5 ◌ table shrinks accordingly.
 
 ## B. ISA breadth — beyond Tier A (the big one)
 
@@ -154,18 +202,33 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 
 ## D. Validating the premise (the actual experiment) 🔴
 
-### D1. Edit-accuracy benchmark — DESIGN §16.1
-- **What:** measure agent edit-accuracy across three arms — (a) raw `.s`, (c) raw
-  `.s` + prose fact comment, (b) `.sasm` — on a fixed mutation set.
-- **Why:** this is what *earns or sinks* the attention-conditioning thesis; until
-  it runs, the headline is a hypothesis.
+### D1. The premise benchmark — DESIGN §16.1 (4 arms × 3 families × 2 protocols)
+- **What:** measure the three §2.1 pillars across four arms — (a) raw `.s`,
+  (c) `.s` + prose fact block at top, (d) `.s` + same facts as **inline comments**
+  (the critical control), (b) `.sasm` — over three task families: comprehension
+  questions, the long-range mutation set, and stale-fact / trace probes.
+- **Why:** this is what *earns or sinks* the thesis; until it runs, the headline
+  is a hypothesis. b-over-d is the only comparison that isolates
+  addressability+checkability from mere locality.
 - **Sub-tasks:**
-  - [ ] mutation generator (resize frame, swap operand, add spill, reorder blocks).
-  - [ ] a known-correct oracle per mutation (lower + assemble + run under qemu).
-  - [ ] harness that prompts an agent on each arm and scores first-try
-    correct-and-assembles.
-  - [ ] report: prediction **b > c > a**; b≈c ⇒ format overbuilt (worth knowing).
-- **Done-when:** a reproducible script produces the three-arm scores.
+  - [ ] mutation generator (resize frame, swap operand, add spill, reorder
+    blocks, retarget branch) + a known-correct oracle per mutation (lower +
+    assemble + run under qemu — reuse `testing/`).
+  - [ ] arm generator: derive (c) and (d) mechanically from the `.sasm` so all
+    arms provably carry the same information.
+  - [ ] comprehension question set (family 1) with ground truth from the
+    validator's derived state.
+  - [ ] edit harness, **Protocol 1** (one-shot): score first-try
+    correct-and-runs per arm.
+  - [ ] edit harness, **Protocol 2** (closed loop, equal budgets): a/c/d get
+    assembler + behavioral feedback, b additionally `sasm check`; score success
+    within N rounds, rounds- and tokens-to-success.
+  - [ ] stale-fact probes (family 3): one corrupted local fact in (d) vs (b);
+    plus which-edit-broke-the-contract trace tasks.
+  - [ ] report: predictions **b ≥ d > c > a** (P1), b-over-d gap **widens** under
+    P2 and with function size; b≈d under P2 ⇒ format overbuilt (worth knowing).
+- **Done-when:** a reproducible script produces the per-arm, per-family,
+  per-protocol scores.
 
 ## E. Layer-1 lowering (SemanticScript → `.sasm`) 🔴
 
@@ -189,6 +252,36 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - [x] More example coverage — pipe sugar (`sugar_test`), ordinal (`ordinal_test`),
   data section (`data_demo`), cross-TU linking (`linked`); fp coverage waits on
   Tier B (B2).
+
+## G. Runtime debug API — DESIGN §18 🔴 (design-only; gated)
+
+- **What:** the dynamic half of the trust invariant: handle→address sidecar map,
+  activation-aware qemu-gdbstub adapter, trace-scoped runtime contract checks
+  (`R-*`), batch-first agent API (`sasm run --break --assert-contracts`).
+- **Gate (DESIGN §18 header):** do not build until (i) D1's Protocol-2 result
+  exists and (ii) the A3 statics the R-checks would backstop have landed.
+  Design was adversarially reviewed by three independent critiques (2026-06-09);
+  their blockers are folded into §18 (activation-filtered temp breakpoints,
+  TailCall-as-exit-event, R-VALUE-FLOW warning-by-default under partial
+  annotations, multi-TU handle qualification, observed/declared labeling,
+  coverage report, static-counterpart discipline).
+- **Build order when ungated:**
+  - [ ] `sasm build --map` sidecar (handle → `.s` line + content hashes) +
+    `-Wa,--gdwarf-4` / `-mno-relax` pins in the testing image.
+  - [ ] host-side stub adapter: connect/break/continue/registers/memory over TCP
+    to in-container `qemu-riscv64 -g`; shared-address breakpoint dedup.
+  - [ ] activation shadow stack (entry/return/TailCall/process-exit events;
+    entry-point roots exempt; opaque-frame suspension).
+  - [ ] batch contract checks, cheap first: `R-ABI-ALIGN`, `R-CFG-EDGE`
+    (head-pair form), `R-ABI-PRESERVE`, `R-EFFECT` (syscalls at covered rows);
+    then `R-LIVE-OUT` and `R-VALUE-FLOW` exactly as scoped in §18.3.
+  - [ ] coverage report + `observed`/`declared` value labeling.
+  - [ ] v2 interactive session (step/stepOver/stepOut/watch/trace) — separate
+    gate: only if the D1 debugging task family shows the channel pays.
+- **Done-when (the demo that earns the section):** the §11 path-dependent
+  clobber — statically passed by the may-analysis — is caught at runtime as
+  `R-VALUE-FLOW`/`R-LIVE-OUT` on the executed path, with a diagnostic naming
+  both the declaring row and the observation row.
 
 ---
 
@@ -332,7 +425,8 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 > (§11.2), the derivable-fact linter, and return-definedness. Build it once, well.
 
 ## Validating the premise (DESIGN §16.1)
-- [ ] **Edit-accuracy benchmark** (three arms: `.s`, `.s`+comment, `.sasm`; predict b > c > a) → **details: D1**
+- [ ] **Premise benchmark** (4 arms incl. inline-comment control; comprehension /
+  edit / staleness families; one-shot + closed-loop protocols) → **details: D1**
 
 ## Open design questions to explore (from DESIGN §17)
 - [ ] Symbolic values vs registers — do values become first-class SSA names?

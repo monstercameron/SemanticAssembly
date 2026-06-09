@@ -46,6 +46,11 @@ def load_formats() -> dict[str, dict]:
     return {r["fmt"]: r for r in _rows("formats.tsv")}
 
 
+def load_syscalls() -> dict[str, dict]:
+    """syscall name -> row. A row whose `return` is '-' never returns (exit)."""
+    return {r["name"]: r for r in _rows("syscalls.tsv")}
+
+
 def load_abi() -> dict[str, dict[str, list[str]]]:
     """abi name -> {property -> [values]}."""
     out: dict[str, dict[str, list[str]]] = {}

@@ -9,16 +9,19 @@ project's shape:
   lowering `π`) or **S** (stripped by `π`). S splits into **S-check** (validator
   verifies it) and **S-intent** (the irreducible *why*, marked as intent).
   Stripping all S-facts must leave byte-identical `.s`.
-- **Verbosity is load-bearing, not free** (DESIGN §2.1). The format converts
-  long-range inference into local lookup, so the target is to *minimize facts the
-  model must integrate over distance* — not to maximize facts. Inclusion test: a
-  fact belongs **iff** it is long-range/cross-control-flow **or** irreducible
-  intent. Anything **derivable** from A-facts + tables is attention dilution —
-  leave it out. (`reads a1` beside an `Add` whose table already says `rs2` is the
+- **Tokens are the price; trust is the constraint** (DESIGN §2.1). The format
+  converts implicit machine state into explicit local rows, and the token cost of
+  that is accepted up front. Inclusion test: every stored fact must be consumed
+  by the emitter (A), a checkable contract (S-check), or marked intent
+  (S-intent) — **no fact is silently believed**. Anything **derivable** from
+  A-facts + tables is an unchecked copy that can drift stale — leave it out.
+  (`reads a1` beside an `Add` whose table already says `rs2` is the
   anti-pattern.)
 - **Intent predicates** — `purpose`, `meaning`, `condition` — are the only
   S-facts allowed to go unchecked, *because* they are syntactically intent.
-  Everything else in S must be checkable.
+  Everything else in S must be checkable — and §10.5 (the enforcement table)
+  tracks which checks exist *today*; an S-check predicate whose check hasn't
+  landed yet must be read as intent until it does.
 - **Data lives in TSV tables**, not the grammar:
   `optable.tsv` (ops), `regs.tsv` (registers), `abi.tsv` (calling conventions),
   `formats.tsv` (encoding formats + immediate ranges), `extmap.tsv` (op-class →
@@ -41,7 +44,8 @@ Surface an implicit fact **iff at least one is true**:
 6. It is **irreducible human/agent intent** that cannot be derived.
 
 Otherwise **do not store it** — derive it from the tables or display it on demand.
-Surfacing derivable trivia is attention dilution (DESIGN §2.1/§11). This rule is
+Surfacing derivable trivia stores unchecked copies the reader will wrongly trust
+(DESIGN §2.1/§11). This rule is
 the operational form of the inclusion test and it governs every predicate below:
 a predicate exists so that *some* fact can satisfy 1–6, and any individual use
 that satisfies none of 1–6 is S-derivable and rejected (`E-DERIVABLE`).
@@ -95,6 +99,50 @@ target and a diagnostic anchor, so it earns being readable but not verbose.
 row in `optable.tsv` (a machine instruction), *not* a high-level Layer-1
 `operation`. The ecosystem now has two senses of the word; in `.sasm`, `operation`
 is always the machine-level opcode key.
+
+## Grammar & namespace rules (locked)
+
+These pin the edge cases an agent edit can hit. Rules marked *(◌ A3)* are
+specified but their check is pending (TODOS A3) — until it lands, the listed
+behavior is what actually happens today.
+
+- **One namespace, file-global, across all entity kinds.** Handles live in a
+  single namespace per translation unit: a `value` and a `block` cannot share a
+  name. An entity has **exactly one `is` declaration**; a second `is` (same or
+  different type) is `E-DUP` *(◌ A3 — today it silently re-types the entity and
+  merges its facts)*.
+- **Single- vs multi-valued predicates.** Predicates carrying one authoritative
+  slot — `is`, `operation`, the register fields, `immediate`, `offset`, `symbol`,
+  `target`, `in` (membership), `entry`, `ordinal`, `visibility`, `binding`,
+  `section`, `type`, `value` (data), `size`, `align`, `leaf`, `terminates` — may
+  appear **at most once per entity**; a duplicate is `E-DUP` *(◌ A3 — today the
+  **first** row silently wins, so an agent that "edits" by appending a new row
+  produces dead text: exactly the silent failure this format exists to prevent;
+  edit the existing row, never append a duplicate)*. Predicates that are
+  genuinely sets — `successor`, `predecessor`, `effect`, `reads`, `writes`,
+  `requires`, `returns`, `liveOut`, `liveIn`, `saves`, `restores`, `preserves`,
+  `usesCalleeSaved`, `in`/`out` (function), `arg`, `calls`, `targets`, `memory`,
+  `stack` — may repeat.
+- **Strings are verbatim bytes.** Double quotes delimit; there is **no escape
+  processing** (`"Hello\n"` keeps the literal backslash-n for the assembler).
+  Consequences: a literal `"` is not representable in v0 (it would also corrupt
+  the emitted `.ascii "…"`), and an **unterminated string is `E-PARSE`**
+  *(◌ A3 — today it silently consumes to end of line)*.
+- **Reserved characters.** Outside strings, `#` starts a comment and `|`
+  separates pipe-sugar clauses (§20); neither can appear in a bare token.
+- **Label namespaces are file-scoped in the assembler.** Block labels emit as
+  `.L<lowercased handle>`, so block handles must be unique **file-wide and
+  case-insensitively** (`Done` vs `done` collide after lowering) — `E-DUP`
+  *(◌ A3)*. Function `symbol`s, `data` entity names, and `symbol` entities share
+  the assembler's global label namespace and must be pairwise distinct —
+  `E-DUP` *(◌ A3)*.
+- **`ordinal` is a decimal integer.** A non-integer ordinal or a duplicate
+  ordinal within a block is `E-ORDER-KEY` *(◌ A3 — today a non-integer ordinal
+  crashes emission with a Python traceback instead of a diagnostic)*.
+- **`writes` to a discarded destination.** A `writes <value>` on an instruction
+  whose only destination register is `zero` binds nothing (the write is
+  discarded by hardware); it is an error — the fact asserts a binding that
+  cannot exist *(◌ A3; today it is silently inert)*.
 
 ---
 
@@ -157,12 +205,19 @@ the body incurred; it is not a blanket ABI restatement, which would be derivable
 | `is block` | — | | |
 | `in` | A | `<function>` | membership (drives layout) |
 | `entry` | A | `yes` | function entry block → gets the symbol label |
-| `terminates` | S | `return`\|`branch`\|`jump`\|`fallthrough`\|`call` | terminator kind (derivable) |
-| `successor` | S | `<block>` | CFG edge (may repeat) |
-| `predecessor` | S | `<block>` | CFG edge (may repeat) |
+| `terminates` | S-check | `return`\|`branch`\|`jump`\|`fallthrough`\|`call`\|`syscall` | pins the terminator kind; cross-checked against the block's actual last instruction (a contract against future edits, not a description). `syscall` = a noreturn syscall (`exit`/`exit_group` — `return -` in `syscalls.tsv`) |
+| `successor` | S-check | `<block>` | CFG edge (may repeat). The declared set must **exactly equal** the terminator-derived edges — a stale successor silently widens every dataflow merge (DESIGN §13) |
+| `predecessor` | S-check | `<block>` | optional; when present, must be the exact inverse of the `successor` relation (a redundant-but-checked contract from the receiving side) |
 | `loop` | S | `header`\|`body`\|`none` | loop role |
 | `backEdgeTo` | S | `<block>` | marks the loop back-edge |
-| `purpose` | S | `"..."` | |
+| `purpose` | S-intent | `"..."` | |
+
+**Layout is positional and checked (DESIGN §11.1).** Blocks emit in source order,
+entry first; `π` never inserts a jump. Every implicit fall-through edge must
+therefore land on the physically next block (`E-CFG-LAYOUT`), the terminator must
+be the block's last row, and a non-entry block without a terminator must declare
+exactly one successor — its fall-through. Reordering block declarations is a
+legal edit only when fall-through adjacency is preserved.
 
 ---
 
@@ -208,6 +263,11 @@ tier.
 | `returns` | S-check | `<value>` | value handed back (on `Return`) |
 | `purpose` | S-intent | `"..."` | |
 
+**`writes <value>` on a `Call` binds the callee's result** — the ABI's first
+return register (`a0`), not the link register the op table lists as the call's
+def (DESIGN §11.2, the call-result rule). This is how "a0 now holds f's result"
+becomes a checkable fact instead of a comment.
+
 **`reads`/`writes`/`requires` take value names, never registers (DESIGN §11.2),
 and are surfaced *selectively*.** A register-level use/def (`reads a1`) is
 derivable from `op` + the register fields → S-derivable, rejected
@@ -233,6 +293,10 @@ the ABI argument registers). For a *known* callee you may narrow them with
 `arg <value> <reg>` and `clobbers <reg>...` at the call site; otherwise the
 conservative model stands, which can make `W-CLOBBER` over-fire (acceptable for
 v0). Call-site ABI facts are how you quiet it when the signature is known.
+*Enforcement honesty:* today the analyses honor `arg` (backward liveness uses
+declared args) but **not `clobbers`** — liveness and value-flow still model the
+full caller-saved set. Until that lands (TODOS A3), treat `clobbers` as intent:
+writing it will not change any diagnostic.
 
 **Liveness / save-restore facts (`liveOut`, `liveAcross`, `clobberRisk`, `saves`,
 `restores`)** are the highest-value surfaced state: they are exactly what agents
@@ -313,7 +377,16 @@ noise on an adjacent producer→consumer pair.
 | `size` | A | `<n>` | byte size (emits `.size` / reserves bss) |
 | `align` | A | `<n>` | alignment (`.align`) |
 | `binding` | A | `global`\|`local`\|`weak` | symbol binding |
-| `purpose` | S | `"..."` | |
+| `purpose` | S-intent | `"..."` | |
+
+**The data contract (`E-DATA`, ◌ A3).** `section bss` requires `size` and
+forbids `value` (uninitialized memory is reserved with `.zero <size>`; today a
+sizeless bss entity silently emits `.zero None`). `section data`/`rodata`
+require `value`. For `type Bytes` the declared `size` must equal the literal's
+byte length — the emitter trusts `size` for the `.size` directive and does not
+recount. An unknown `type` is an error (today it silently falls back to
+`.dword`). `Float32`/`Float64` initializers are **not supported in v0** — there
+is no float directive mapping; declare the bits as `Nat32`/`Nat64` if needed.
 
 ---
 
@@ -397,6 +470,69 @@ Float32 Float64
 Boolean  Address  Bytes
 <T>Pointer   e.g. Int64Pointer
 ```
+
+---
+
+## 10.5 Enforcement status — the honesty table (governing)
+
+The §2.1 invariant is *no fact silently believed*. That cuts both ways: a
+**predicate whose check is not yet implemented must not masquerade as checked.**
+This table is the contract; the rule for readers and agents is:
+
+> **Until a predicate's check lands, treat its facts as S-intent — context, not
+> ground truth — no matter what tier the schema assigns it.**
+
+**Checked today** (writing a wrong fact produces a diagnostic):
+
+| facts | guarded by |
+|-------|-----------|
+| `operation`, operand fields, required fields | `E-ISA-OPCODE` `E-ISA-FIELD` `E-ISA-REG` |
+| `in`/`target`/`offset` references; `reads`/`writes`/`returns`/`requires` value resolution | `E-REF` |
+| register names in `reads`/`writes`/`returns`/`requires` | `E-DERIVABLE` |
+| `reads`/`writes`/`returns`/`requires` bindings | `E-VALUE-FLOW` (may-form, DESIGN §11) |
+| function `effect` (with the internal-effect rule), `leaf` | `E-EFFECT` `E-LEAF` |
+| `stack bytes` 16-alignment; slot offset vs frame | `E-ABI-ALIGN` `W-SLOT` (start-only) |
+| callee-saved reuse vs `saves`/`restores`/`preserves` (set-wise) | `E-ABI-PRESERVE` |
+| use-before-def, return definedness, `liveOut` | `E-LIVE-UNDEF` `E-LIVE-RET` `E-LIVE-ASSERT` |
+| clobber/dead warnings | `W-CLOBBER` `W-DEAD` |
+| branch target ∈ declared successors; reachability | `E-CFG-EDGE` (target side) `W-UNREACHABLE` |
+| fall-through adjacency; rows after a terminator; running off the last block; targeted entry block | `E-CFG-LAYOUT` |
+| `terminates` vs the block's actual terminator (incl. noreturn syscalls) | `E-CFG-EDGE` |
+| `writes <value>` on a `Call` binds the ABI return register (the call-result rule, DESIGN §11.2) | `E-VALUE-FLOW` |
+| `writes` width vs op width | `E-TYPE` |
+| decimal `immediate` ranges (incl. `shamt6`) | `E-IMM-RANGE` |
+| ordinal mixing within a block | `E-ORDER-MIXED` |
+
+**Specified, not yet checked** (◌ — treat as intent until TODOS A3/A1 lands):
+
+| facts | intended guard |
+|-------|----------------|
+| successor exactness (stale edges); `predecessor` inverse | `E-CFG-EDGE` |
+| duplicate single-valued facts; re-`is`; label/symbol collisions | `E-DUP` |
+| `ordinal` integer-ness / duplicates | `E-ORDER-KEY` |
+| the data contract (§6) | `E-DATA` |
+| extension gating vs `program target` | `E-EXT-UNAVAILABLE` |
+| `clobbers` narrowing at call sites (analyses still assume full caller-saved) | liveness/value-flow |
+| `liveIn`, `liveAcross`, `clobberRisk`, `kills`, `valueBindings complete` | liveness/value-flow extensions |
+| `saves`/`restores` slot *pairing* and per-return-path completeness | `E-ABI-PRESERVE` refinement |
+| `stack bytes` vs the actual prologue `addi sp, sp, -N` | `E-ABI-ALIGN` refinement |
+| `syscall <name>` vs `syscalls.tsv` (number in `a7`, args live) | `E-EFFECT`/liveness |
+| `memory region`/`type`/`align`/`volatile` resolution (region names are unvalidated; only `kind stack` feeds the internal-effect rule) | `E-REF`/`E-TYPE` |
+| effect *region qualifiers* (`effect memory.write <region>`) | `E-REF` |
+| value `in`-scope, `definedBy`/`storedIn`/`restoredBy`, `signed`/`unit` consistency | value-flow extensions |
+| whole constructs: `parameter` (§13), indirect control flow (§14), atomics pairing (§15), CSR (§18), FP (§19), `vectorConfig` (§9) | Tier B/V/P validators |
+| the general derivable-fact linter | `E-DERIVABLE` (TODOS A1) |
+
+The "Everything else in S must be checkable" rule in the intro means checkable
+**in principle and in the design**; this table is where *in practice* is tracked.
+A predicate may not stay in the ◌ rows indefinitely — each must either gain its
+check or be demoted to S-intent / removed (that is a standing design debt, owned
+by TODOS A3).
+
+**Runtime clause (DESIGN §18):** a runtime contract check (`R-*`) is
+trace-scoped — it proves a fact held on one executed path under one input, and
+**never changes a fact's status in this table**. A ◌ fact stays intent after any
+number of clean runs; only a landed static check moves a row.
 
 ---
 

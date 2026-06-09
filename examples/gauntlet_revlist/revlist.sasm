@@ -1,0 +1,330 @@
+# revlist(head)  — reverse a singly-linked list in place, return the new head.
+# sumlist(head)  — sum of value * 1-based-position (order-sensitive checksum).
+#
+# Node layout: value@0, next@8.
+#
+# The rotation hazard the facts pin down: inside Rotate the FOUR rows have a
+# strict order (load next -> overwrite link -> save prev -> advance). Each row
+# names which pointer it consumes and produces, so a reorder is visible as a
+# broken reads/writes chain instead of a silently cyclic list.
+#
+# One TU, two functions: handles and value names share the file-global
+# namespace, so each function's values are named distinctly.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+nodePool is memoryRegion
+nodePool kind heap
+nodePool aliases none
+
+# ---- revlist values ----
+
+cursor is value
+cursor type Address
+cursor meaning "the node being detached this iteration; rotates every loop"
+
+previousNode is value
+previousNode type Address
+previousNode meaning "head of the already-reversed prefix; becomes the answer"
+
+nextNode is value
+nextNode type Address
+nextNode meaning "saved cursor->next — MUST be read before the link is overwritten"
+
+reversedHead is value
+reversedHead type Address
+reversedHead meaning "the reversed list's head, handed back"
+
+Reverse is function
+Reverse symbol revlist
+Reverse visibility global
+Reverse abi linux.riscv64
+Reverse in cursor Address a0
+Reverse out reversedHead Address a0
+Reverse effect memory.read nodePool
+Reverse effect memory.write nodePool
+Reverse leaf yes
+Reverse stack bytes 0
+Reverse purpose "Reverse the list in place by rotating three pointers"
+
+ReverseEntry is block
+ReverseEntry in Reverse
+ReverseEntry entry yes
+ReverseEntry terminates fallthrough
+ReverseEntry successor ReverseCheck
+ReverseEntry purpose "previousNode = null (empty reversed prefix)"
+
+ReverseCheck is block
+ReverseCheck in Reverse
+ReverseCheck terminates branch
+ReverseCheck predecessor ReverseEntry
+ReverseCheck predecessor Rotate
+ReverseCheck successor ReverseDone
+ReverseCheck successor Rotate
+ReverseCheck loop header
+ReverseCheck purpose "Loop guard: stop when cursor is null"
+
+Rotate is block
+Rotate in Reverse
+Rotate terminates jump
+Rotate predecessor ReverseCheck
+Rotate successor ReverseCheck
+Rotate loop body
+Rotate backEdgeTo ReverseCheck
+Rotate purpose "The strict 4-step rotation: read link, flip link, save prev, advance"
+
+ReverseDone is block
+ReverseDone in Reverse
+ReverseDone terminates return
+ReverseDone predecessor ReverseCheck
+ReverseDone purpose "Answer is the reversed prefix's head"
+
+initializePrevious is insn
+initializePrevious in ReverseEntry
+initializePrevious operation LoadImmediate
+initializePrevious destination t0
+initializePrevious immediate 0
+initializePrevious writes previousNode
+initializePrevious purpose "previousNode = null"
+
+checkCursorNull is insn
+checkCursorNull in ReverseCheck
+checkCursorNull operation BranchIfZero
+checkCursorNull firstSource a0
+checkCursorNull target ReverseDone
+checkCursorNull fallthrough Rotate
+checkCursorNull reads cursor
+checkCursorNull condition "cursor == null: whole list consumed"
+
+loadNextNode is insn
+loadNextNode in Rotate
+loadNextNode operation LoadDoubleword
+loadNextNode destination t1
+loadNextNode base a0
+loadNextNode offset 8
+loadNextNode effect memory.read
+loadNextNode memory region nodePool
+loadNextNode reads cursor
+loadNextNode writes nextNode
+loadNextNode purpose "STEP 1: nextNode = cursor->next — before the link is destroyed"
+
+flipLink is insn
+flipLink in Rotate
+flipLink operation StoreDoubleword
+flipLink secondSource t0
+flipLink base a0
+flipLink offset 8
+flipLink effect memory.write
+flipLink memory region nodePool
+flipLink reads cursor
+flipLink reads previousNode
+flipLink purpose "STEP 2: cursor->next = previousNode — the reversal itself"
+
+savePrevious is insn
+savePrevious in Rotate
+savePrevious operation Move
+savePrevious destination t0
+savePrevious firstSource a0
+savePrevious reads cursor
+savePrevious writes previousNode
+savePrevious purpose "STEP 3: previousNode = cursor — before cursor advances"
+
+advanceCursor is insn
+advanceCursor in Rotate
+advanceCursor operation Move
+advanceCursor destination a0
+advanceCursor firstSource t1
+advanceCursor reads nextNode
+advanceCursor writes cursor
+advanceCursor purpose "STEP 4: cursor = nextNode"
+
+rotateBackEdge is insn
+rotateBackEdge in Rotate
+rotateBackEdge operation Jump
+rotateBackEdge target ReverseCheck
+rotateBackEdge liveOut t0:previousNode
+rotateBackEdge liveOut a0:cursor
+rotateBackEdge purpose "Loop-carried: previousNode and cursor survive into the next iteration"
+
+moveAnswer is insn
+moveAnswer in ReverseDone
+moveAnswer operation Move
+moveAnswer destination a0
+moveAnswer firstSource t0
+moveAnswer reads previousNode
+moveAnswer writes reversedHead
+moveAnswer purpose "reversedHead = previousNode"
+
+returnReversedHead is insn
+returnReversedHead in ReverseDone
+returnReversedHead operation Return
+returnReversedHead returns reversedHead
+returnReversedHead purpose "Hand the new head back in a0"
+
+# ---- sumlist values (distinct names: the namespace is file-global) ----
+
+walker is value
+walker type Address
+walker meaning "the node being visited; advances every iteration"
+
+runningSum is value
+runningSum type Int64
+runningSum signed yes
+runningSum meaning "accumulated weighted sum; loop-carried"
+
+position is value
+position type Int64
+position signed yes
+position meaning "1-based position weight; loop-carried"
+
+weightedSum is value
+weightedSum type Int64
+weightedSum signed yes
+weightedSum meaning "the order-sensitive checksum handed back"
+
+Summation is function
+Summation symbol sumlist
+Summation visibility global
+Summation abi linux.riscv64
+Summation in walker Address a0
+Summation out weightedSum Int64 a0
+Summation effect memory.read nodePool
+Summation leaf yes
+Summation stack bytes 0
+Summation purpose "Sum value*position over the list — a checksum that notices order"
+
+SumEntry is block
+SumEntry in Summation
+SumEntry entry yes
+SumEntry terminates fallthrough
+SumEntry successor SumCheck
+SumEntry purpose "runningSum = 0, position = 1"
+
+SumCheck is block
+SumCheck in Summation
+SumCheck terminates branch
+SumCheck predecessor SumEntry
+SumCheck predecessor SumBody
+SumCheck successor SumDone
+SumCheck successor SumBody
+SumCheck loop header
+SumCheck purpose "Loop guard: stop when walker is null"
+
+SumBody is block
+SumBody in Summation
+SumBody terminates jump
+SumBody predecessor SumCheck
+SumBody successor SumCheck
+SumBody loop body
+SumBody backEdgeTo SumCheck
+SumBody purpose "runningSum += walker->value * position; position++; advance"
+
+SumDone is block
+SumDone in Summation
+SumDone terminates return
+SumDone predecessor SumCheck
+SumDone purpose "Answer is the accumulated sum"
+
+initializeSum is insn
+initializeSum in SumEntry
+initializeSum operation LoadImmediate
+initializeSum destination t0
+initializeSum immediate 0
+initializeSum writes runningSum
+initializeSum purpose "runningSum = 0"
+
+initializePosition is insn
+initializePosition in SumEntry
+initializePosition operation LoadImmediate
+initializePosition destination t1
+initializePosition immediate 1
+initializePosition writes position
+initializePosition purpose "position = 1"
+
+checkWalkerNull is insn
+checkWalkerNull in SumCheck
+checkWalkerNull operation BranchIfZero
+checkWalkerNull firstSource a0
+checkWalkerNull target SumDone
+checkWalkerNull fallthrough SumBody
+checkWalkerNull reads walker
+checkWalkerNull condition "walker == null: whole list visited"
+
+loadNodeValue is insn
+loadNodeValue in SumBody
+loadNodeValue operation LoadDoubleword
+loadNodeValue destination t2
+loadNodeValue base a0
+loadNodeValue offset 0
+loadNodeValue effect memory.read
+loadNodeValue memory region nodePool
+loadNodeValue reads walker
+loadNodeValue purpose "walker->value (adjacent scratch)"
+
+weighValue is insn
+weighValue in SumBody
+weighValue operation Multiply
+weighValue destination t2
+weighValue firstSource t2
+weighValue secondSource t1
+weighValue reads position
+weighValue purpose "value * position"
+
+accumulate is insn
+accumulate in SumBody
+accumulate operation Add
+accumulate destination t0
+accumulate firstSource t0
+accumulate secondSource t2
+accumulate reads runningSum
+accumulate writes runningSum
+accumulate purpose "runningSum += weighted value"
+
+incrementPosition is insn
+incrementPosition in SumBody
+incrementPosition operation AddImmediate
+incrementPosition destination t1
+incrementPosition firstSource t1
+incrementPosition immediate 1
+incrementPosition reads position
+incrementPosition writes position
+incrementPosition purpose "position++"
+
+advanceWalker is insn
+advanceWalker in SumBody
+advanceWalker operation LoadDoubleword
+advanceWalker destination a0
+advanceWalker base a0
+advanceWalker offset 8
+advanceWalker effect memory.read
+advanceWalker memory region nodePool
+advanceWalker reads walker
+advanceWalker writes walker
+advanceWalker purpose "walker = walker->next"
+
+sumBackEdge is insn
+sumBackEdge in SumBody
+sumBackEdge operation Jump
+sumBackEdge target SumCheck
+sumBackEdge liveOut t0:runningSum
+sumBackEdge liveOut t1:position
+sumBackEdge liveOut a0:walker
+sumBackEdge purpose "Loop-carried: runningSum/position/walker survive into the next iteration"
+
+moveSumAnswer is insn
+moveSumAnswer in SumDone
+moveSumAnswer operation Move
+moveSumAnswer destination a0
+moveSumAnswer firstSource t0
+moveSumAnswer reads runningSum
+moveSumAnswer writes weightedSum
+moveSumAnswer purpose "weightedSum = runningSum"
+
+returnWeightedSum is insn
+returnWeightedSum in SumDone
+returnWeightedSum operation Return
+returnWeightedSum returns weightedSum
+returnWeightedSum purpose "Hand the checksum back in a0"

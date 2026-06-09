@@ -27,7 +27,7 @@ Start purpose "Write a message to stdout and exit cleanly"
 Entry is block
 Entry in Start
 Entry entry yes
-Entry terminates return
+Entry terminates syscall
 
 setWriteSyscall is insn
 setWriteSyscall in Entry

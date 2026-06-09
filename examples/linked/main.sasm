@@ -28,7 +28,7 @@ Main purpose "exit(triple(14)) = exit(42)"
 Entry is block
 Entry in Main
 Entry entry yes
-Entry terminates return
+Entry terminates syscall
 
 setArgument is insn
 setArgument in Entry

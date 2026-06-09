@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Semantic Assembly — agent-editable RISC-V</title>
-<meta name="description" content="A thin, row-based fact layer over RISC-V assembly where every hidden assumption is made explicit and checkable. An attention-conditioning format for LLM agents.">
+<meta name="description" content="A thin, row-based fact layer over RISC-V assembly where every hidden assumption is made explicit and checkable. An agent-native machine format: understandable, editable, and traceable by AI agents.">
 <style>
   :root{
     --bg:#0b0f17; --panel:#111726; --panel2:#0e1420; --ink:#e6edf3; --mut:#9aa7b8;
@@ -148,11 +148,16 @@
       <p class="mut">Control flow is implicit in label position and fall-through.</p></div>
   </div>
   <div class="note" style="margin-top:20px"><strong>The thesis.</strong> Semantic
-  Assembly is an <em>attention-conditioning format</em>: it moves the information an
-  edit needs from <em>must-be-inferred-over-distance</em> to <em>present-locally</em>,
-  as a row the agent can address and patch — then a validator catches the cases
-  where the edit broke a contract anyway. We are not making the model smarter; we
-  are changing what its attention can do reliably.</div>
+  Assembly is an <em>agent-native machine format</em>: machine code an agent can
+  <em>understand</em> (every load-bearing fact is written down, locally, instead of
+  left implicit in machine state), <em>edit</em> (every fact is an addressable row
+  with a stable handle, and a wrong edit produces a targeted diagnostic instead of
+  silent corruption), and <em>manage</em> (handles survive edits, emission is
+  deterministic, every diagnostic has a stable code). Assembly has none of the
+  hand-holding of C — so the safety C buys by thickening its abstraction is
+  recovered here from metadata plus a validator, with the layer kept thin. The
+  price is tokens, and the price is accepted; what is never accepted is a fact the
+  model might wrongly believe.</div>
 </div></section>
 
 <!-- IDEA -->
@@ -245,9 +250,11 @@ add2:
 <section id="inclusion"><div class="wrap">
   <div class="kicker">The discipline</div>
   <h2>Surface dangerous state — not everything.</h2>
-  <p>More facts is not the goal. A fact that merely restates what's derivable from
-  the op tables is <em>attention dilution</em>, and is forbidden. The objective is
-  to <strong>minimize the facts the model must integrate across distance</strong>.</p>
+  <p>More facts is not the goal, and token count is not the constraint — trust is.
+  A fact that merely restates what's derivable from the op tables is an
+  <em>unchecked copy</em> that can drift stale, and is forbidden. The rule:
+  <strong>every stored fact is consumed by the emitter, checked by the validator,
+  or marked as intent — no fact is silently believed</strong>.</p>
   <div class="note">A fact earns its place <strong>iff</strong> it (1) affects
   correctness across more than one instruction, (2) crosses a control-flow edge,
   (3) crosses a call / syscall / ABI boundary, (4) names a memory region / stack
@@ -335,11 +342,15 @@ add2:
     </div>
   </div>
   <div class="note" style="margin-top:18px"><strong>It's a bet, stated as one.</strong>
-  The claim — that local, addressable facts beat inferred ones — is falsifiable.
-  The planned experiment measures agent edit-accuracy across three arms: raw
-  <code>.s</code>, raw <code>.s</code> + a prose fact comment, and <code>.sasm</code>.
-  The prediction is <code>.sasm &gt; comment &gt; raw</code>; if the structured format
-  doesn't beat a comment, it's overbuilt — a result worth knowing.</div>
+  The claim — that explicit, addressable, checked facts beat inferred ones — is
+  falsifiable. The planned benchmark runs four arms carrying the same information
+  in different forms: raw <code>.s</code>, <code>.s</code> + a prose fact block,
+  <code>.s</code> + the same facts as inline comments, and <code>.sasm</code> —
+  across comprehension, long-range edit, and stale-fact tasks, both one-shot and
+  with a validator-in-the-loop at equal feedback budgets. The critical comparison
+  is <code>.sasm</code> vs inline comments: it isolates addressability +
+  checkability from mere locality. If <code>.sasm</code> doesn't beat good
+  comments once the loop closes, the format is overbuilt — a result worth knowing.</div>
 </div></section>
 
 <footer><div class="wrap">

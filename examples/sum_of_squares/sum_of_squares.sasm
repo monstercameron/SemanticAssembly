@@ -40,7 +40,7 @@ Start purpose "Compute sum of squares 1..10, print it, exit 0"
 startEntry is block
 startEntry in Start
 startEntry entry yes
-startEntry terminates return
+startEntry terminates syscall
 
 startSetLimit is insn
 startSetLimit in startEntry

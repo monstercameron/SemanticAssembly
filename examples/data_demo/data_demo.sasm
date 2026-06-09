@@ -40,7 +40,7 @@ DataDemo purpose "answer+1 round-tripped through .bss, exit with it (42)"
 Entry is block
 Entry in DataDemo
 Entry entry yes
-Entry terminates return
+Entry terminates syscall
 
 loadAnswerAddress is insn
 loadAnswerAddress in Entry

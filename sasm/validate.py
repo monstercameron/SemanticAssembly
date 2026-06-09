@@ -182,6 +182,109 @@ def _fn_insns(prog, fn):
         yield from prog.members_of(blk.name, "insn")
 
 
+_TERMINATOR_KINDS = {"branch", "jump", "return", "syscall"}
+
+
+def _check_layout(prog, fn, ops, syscalls, add) -> None:
+    """E-CFG-LAYOUT (DESIGN §11.1/§14): block source order IS layout and π never
+    synthesizes a jump, so:
+      (1) a terminator must be its block's last row;
+      (2) every implicit fall-through edge must land on the physically next block;
+      (3) the function may not run off its last block;
+      (4) nothing may target the entry block until §15.1's label rule lands.
+    Also cross-checks a declared `terminates` against the actual terminator
+    (the E-CFG-EDGE half of §13 step 2).
+
+    A terminator is a branch/jump/return row — or a NORETURN syscall (an
+    EnvironmentCall whose `syscall` name has `return -` in syscalls.tsv, e.g.
+    exit): control provably never continues past it."""
+    blocks = prog.members_of(fn.name, "block")
+    if not blocks:
+        return
+    blocks.sort(key=lambda b: (b.scalar("entry") != "yes", b.order))
+    names = {b.name for b in blocks}
+    entry = blocks[0].name if blocks[0].scalar("entry") == "yes" else None
+    nxt = {blocks[i].name: (blocks[i + 1].name if i + 1 < len(blocks) else None)
+           for i in range(len(blocks))}
+
+    def kind_of(i) -> str:
+        """terminator kind of a row, or 'seq' if control continues past it."""
+        spec = ops.get(i.scalar("operation"))
+        c = spec["control"] if spec else "seq"
+        if c in ("branch", "jump", "return"):
+            return c
+        if c == "syscall":
+            row = syscalls.get(i.scalar("syscall") or "")
+            if row and row.get("return") == "-":
+                return "syscall"          # noreturn: exit / exit_group
+        return "seq" if c != "call" else "call"
+
+    for b in blocks:
+        insns = prog.members_of(b.name, "insn")
+        kinds = [kind_of(i) for i in insns]
+        for i in insns:
+            tgt = i.scalar("target")
+            if entry and tgt == entry:
+                add("error", "E-CFG-LAYOUT", i.name,
+                    f"targets the entry block {entry}: its label is suppressed "
+                    f"by the emitter (§15.1) — branch to a non-entry block")
+
+        # (1) terminator must be last
+        term_at = next((k for k, c in enumerate(kinds)
+                        if c in _TERMINATOR_KINDS), None)
+        if term_at is not None and term_at != len(insns) - 1:
+            add("error", "E-CFG-LAYOUT", insns[term_at + 1].name,
+                f"row after the terminator `{insns[term_at].name}` in {b.name} "
+                f"— move it before the terminator or into a successor block")
+
+        last = insns[-1] if insns else None
+        ctrl = kinds[-1] if kinds else "seq"
+
+        # terminates cross-check (declared vs actual last row)
+        declared_kind = b.scalar("terminates")
+        actual = ctrl if ctrl in _TERMINATOR_KINDS else "fallthrough"
+        allowed = {actual} | ({"call"} if ctrl == "call" else set())
+        if declared_kind and declared_kind not in allowed:
+            add("error", "E-CFG-EDGE", b.name,
+                f"declares `terminates {declared_kind}` but the last row "
+                f"{'(' + last.name + ') ' if last else ''}is {actual}")
+
+        # (2)/(3) fall-through adjacency
+        succ = [s for s in b.values("successor") if s in names]
+        if ctrl == "branch":
+            tgt = last.scalar("target")
+            ft = last.scalar("fallthrough")
+            if ft is None:
+                rest = [s for s in succ if s != tgt]
+                ft = rest[0] if len(rest) == 1 else None
+            if ft is None:
+                add("error", "E-CFG-LAYOUT", last.name,
+                    f"cannot determine the fall-through successor of {b.name}: "
+                    f"declare `fallthrough <block>` on the branch or exactly "
+                    f"one non-target `successor`")
+            elif ft != nxt[b.name]:
+                add("error", "E-CFG-LAYOUT", b.name,
+                    f"falls through to {ft} but the next block in layout is "
+                    f"{nxt[b.name] or 'nothing'} — reorder the blocks or make "
+                    f"the edge an explicit Jump row")
+        elif ctrl not in _TERMINATOR_KINDS:
+            # plain end (seq/call) or an empty block: implicit fall-through
+            if nxt[b.name] is None:
+                add("error", "E-CFG-LAYOUT", b.name,
+                    f"{fn.name} runs off its last block {b.name} without a "
+                    f"terminator — end it with Return or Jump")
+            elif len(succ) != 1:
+                add("error", "E-CFG-LAYOUT", b.name,
+                    f"falls through without a terminator but declares "
+                    f"{len(succ)} successors — exactly one (the physically "
+                    f"next block) is required")
+            elif succ[0] != nxt[b.name]:
+                add("error", "E-CFG-LAYOUT", b.name,
+                    f"falls through to {succ[0]} but the next block in layout "
+                    f"is {nxt[b.name]} — reorder the blocks or make the edge "
+                    f"an explicit Jump row")
+
+
 def _check_reachability(prog, fn, add) -> None:
     """W-UNREACHABLE: a block with no path from the entry along declared
     `successor` edges (DESIGN §13 / E-CFG-EDGE 'not reachable' half)."""
@@ -268,6 +371,12 @@ def _check_value_flow(prog, fn, ops, abi, value_names, add) -> None:
                     st[r] = {f"·call:{i.name}:{r}"}
             writes = [w[0] for w in i.all("writes") if w]
             dests = _role_regs(i, spec["defines"])
+            if spec["control"] == "call" and writes:
+                # `writes <value>` on a Call binds the callee's RESULT, which
+                # arrives in the ABI return register — not in the link register
+                # the op table lists as the def (DESIGN §11.2 call-result rule).
+                ret_int = abi.get(abikey, {}).get("returnInteger", ["a0"])
+                dests = {ret_int[0]}
             for d in dests:
                 st[d] = set(writes) if writes else {f"·def:{i.name}:{d}"}
         return st
@@ -474,6 +583,7 @@ def validate(prog: Program) -> list[Diagnostic]:
     regs = isa.reg_names()
     formats = isa.load_formats()
     abi = isa.load_abi()
+    syscalls = isa.load_syscalls()
 
     diags: list[Diagnostic] = []
 
@@ -610,6 +720,7 @@ def validate(prog: Program) -> list[Diagnostic]:
                         f"offset {off} is outside the {frame}-byte frame")
 
         _check_preserve(prog, fn, ops, abi, add)
+        _check_layout(prog, fn, ops, syscalls, add)
         _check_liveness(prog, fn, ops, abi, regs, add)
         _check_backward(prog, fn, ops, abi, add)
         _check_value_flow(prog, fn, ops, abi, values, add)

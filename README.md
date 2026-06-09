@@ -17,20 +17,32 @@ the idea space (enable GitHub Pages from `/docs` to publish it).
 
 ## Why
 
-Raw assembly is hard for an LLM to edit *reliably* — not because the model can't
-read it, but because correctness lives in **long-range, implicit, stateful**
-dependencies (which value is in `a1` here? what does this call clobber? is the
-frame still 16-byte aligned?). That is exactly the regime where attention
-degrades.
+An AI agent editing raw assembly gets none of the hand-holding C provides — no
+types, no checked calling convention, no managed frame. Those contracts live in
+the programmer's head and fail silently. Worse, the facts an edit depends on
+(which value is in `a1` here? what does this call clobber? is the frame still
+16-byte aligned?) are not merely far away in the file — mostly they are
+**nowhere in the text at all**, and must be derived by replaying the machine.
 
-`sasm` is an **attention-conditioning format**: it moves the information an edit
-needs from *must-be-inferred-over-distance* to *present-locally*, as a row the
-agent can address and patch — and a validator then catches the cases where the
-edit broke a contract anyway. (See [`DESIGN.md`](research/DESIGN.md) §2.1.)
+`sasm` makes machine code **agent-native** while staying thin (every instruction
+row still maps to exactly one real assembler statement):
 
-It is *thin*: every instruction row still maps to exactly one real assembler
-statement. Lowering (`π`) is a lossy projection that strips all the context and
-emits plain `.s` — so the verbosity costs source bytes, not code.
+- **understandable** — every load-bearing fact is written down, locally, instead
+  of left implicit in machine state;
+- **editable** — every fact is an addressable row with a stable handle, and a
+  wrong edit produces a targeted diagnostic instead of silent corruption;
+- **manageable / traceable** — handles survive edits, `sasm facts` answers
+  "everything about X" mechanically, and emission is deterministic, so every
+  edit is a minimal reviewable `.s` diff.
+
+The safety C buys by *thickening* its abstraction, `sasm` recovers from
+**metadata plus a validator** with the abstraction kept thin. The price is
+tokens — a `.sasm` file runs 10–20× its `.s` — and the price is accepted:
+lowering (`π`) is a lossy projection that strips all context, so verbosity costs
+source bytes, never code. What is *never* accepted is an unchecked fact: every
+stored fact is either consumed by the emitter, checked by the validator, or
+explicitly marked as intent. **No fact is silently believed.** (See
+[`DESIGN.md`](research/DESIGN.md) §2.1.)
 
 ## The idea, in one example
 
@@ -222,6 +234,9 @@ Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, gol
 | `sum_of_squares` | **multi-function program** — 3 functions, calls, loop with `mul`, decimal conversion with `div`/`rem`, stack buffer; prints `385` |
 | `data_demo` | `.data` + `.bss` sections, alignment, global loads/stores; exits `42` |
 | `linked` | **two translation units** (`main` + `lib`) — external `symbol`, cross-TU call; exits `42` |
+| `gauntlet_ackermann` | **nested recursion** — `ack(m-1, ack(m, n-1))`, call-result binding, 3-way dispatch CFG; `ack(3,3)` = 2432 calls |
+| `gauntlet_quicksort` | **two recursions + mutating partition loop** — 8-block CFG, three values riding a call in `s0`/`s1`/`s2` |
+| `gauntlet_revlist` | **pointer rotation** — in-place list reversal where row order is the algorithm; two functions, one TU |
 
 ## Testing
 
@@ -281,13 +296,20 @@ research/          all the docs (every .md except this README)
 
 Working today: the **compiler** (RV64 "Tier A": RV64I + M + Zicond + scalar
 atomics) emits byte-identical, assembling, *executing* RISC-V; the **validator**
-implements the entire diagnostic catalog (19 codes) with zero false positives on
-the examples. All proven on emulated RISC-V.
+implements the original 19-code catalog with zero false positives on the
+examples. All proven on emulated RISC-V.
 
-Honestly not done yet: the general `E-DERIVABLE` reachability linter; broader ISA
-coverage (Tiers B/V/P, planned via the official `riscv/riscv-opcodes` generator);
-and a couple of compiler edges the examples don't yet exercise (the compact pipe
-sugar, `ordinal` ordering). See [`TODOS.md`](research/TODOS.md).
+Honestly not done yet: a 2026-06 edge-case audit specified five further
+diagnostic codes (TODOS A3); the gauntlet shakedown then landed the sharpest
+one — `E-CFG-LAYOUT` (block-layout adjacency, rows after a terminator,
+noreturn-syscall terminators) plus the `terminates` cross-check and the
+call-result binding rule — leaving duplicate facts, data contracts, ordinal
+sanity, and extension gating still ◌ (unenforced); until each lands, the facts
+it would guard must be read as intent (LANGUAGE §10.5). Also outstanding: the general `E-DERIVABLE`
+reachability linter; broader ISA coverage (Tiers B/V/P, planned via the official
+`riscv/riscv-opcodes` generator); and a couple of compiler edges the examples
+don't yet exercise (the compact pipe sugar, `ordinal` ordering). See
+[`TODOS.md`](research/TODOS.md).
 
 ## Design docs
 

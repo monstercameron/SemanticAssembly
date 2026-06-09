@@ -1,0 +1,308 @@
+# ack(level, count):
+#   level == 0 -> count + 1
+#   count == 0 -> ack(level-1, 1)
+#   else       -> ack(level-1, ack(level, count-1))   <- NESTED recursion
+#
+# The trap raw assembly hides: in the general case the INNER call's result
+# becomes the OUTER call's second argument while `level` must survive the
+# inner call AND the argument shuffle. One register slip and ack(3,3) walks
+# 2432 frames of garbage. Here the survival plan is written down and checked:
+# level lives in s0 (callee-saved) across the inner call (liveOut s0:level).
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+# ---- values that cross blocks or calls (LANGUAGE §0.5) ----
+
+level is value
+level type Int64
+level signed yes
+level meaning "first input m; must survive the inner recursive call"
+
+count is value
+count type Int64
+count signed yes
+count meaning "second input n; consumed before any call"
+
+result is value
+result type Int64
+result meaning "the Ackermann value handed back"
+
+Ackermann is function
+Ackermann symbol ack
+Ackermann visibility global
+Ackermann abi linux.riscv64
+Ackermann in level Int64 a0
+Ackermann in count Int64 a1
+Ackermann out result Int64 a0
+Ackermann effect call
+Ackermann leaf no
+Ackermann calls ack
+Ackermann stack bytes 32
+Ackermann stack align 16
+Ackermann preserves returnAddress
+Ackermann preserves s0
+Ackermann purpose "Ackermann function: deep nested recursion, frame discipline on every path"
+
+# ---- named slots ----
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Ackermann
+SlotReturnAddress offset 24
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Ackermann
+SlotSavedS0 offset 16
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+# ---- blocks (source order IS layout — every fallthrough lands on the next block) ----
+
+Prologue is block
+Prologue in Ackermann
+Prologue entry yes
+Prologue terminates branch
+Prologue successor LevelZero
+Prologue successor CheckCount
+Prologue purpose "Build frame, save returnAddress/s0, dispatch the level==0 base case"
+
+CheckCount is block
+CheckCount in Ackermann
+CheckCount terminates branch
+CheckCount predecessor Prologue
+CheckCount successor CountZero
+CheckCount successor General
+CheckCount purpose "Dispatch the count==0 case"
+
+General is block
+General in Ackermann
+General terminates fallthrough
+General predecessor CheckCount
+General successor Epilogue
+General purpose "result = ack(level-1, ack(level, count-1)) — the nested case"
+
+Epilogue is block
+Epilogue in Ackermann
+Epilogue terminates return
+Epilogue predecessor General
+Epilogue predecessor LevelZero
+Epilogue predecessor CountZero
+Epilogue purpose "Restore saved registers, free frame, return"
+
+LevelZero is block
+LevelZero in Ackermann
+LevelZero terminates jump
+LevelZero predecessor Prologue
+LevelZero successor Epilogue
+LevelZero purpose "Base case: result = count + 1"
+
+CountZero is block
+CountZero in Ackermann
+CountZero terminates jump
+CountZero predecessor CheckCount
+CountZero successor Epilogue
+CountZero purpose "Edge case: result = ack(level-1, 1)"
+
+# ---- Prologue ----
+
+allocateFrame is insn
+allocateFrame in Prologue
+allocateFrame operation AddImmediate
+allocateFrame destination stackPointer
+allocateFrame firstSource stackPointer
+allocateFrame immediate -32
+allocateFrame effect stack.allocate
+allocateFrame purpose "Allocate the 16-byte-aligned 32-byte frame"
+
+saveReturnAddress is insn
+saveReturnAddress in Prologue
+saveReturnAddress operation StoreDoubleword
+saveReturnAddress secondSource returnAddress
+saveReturnAddress base stackPointer
+saveReturnAddress offset SlotReturnAddress
+saveReturnAddress effect memory.write
+saveReturnAddress memory region stackFrame
+saveReturnAddress saves returnAddress SlotReturnAddress
+saveReturnAddress purpose "Every Call clobbers returnAddress"
+
+saveCallerS0 is insn
+saveCallerS0 in Prologue
+saveCallerS0 operation StoreDoubleword
+saveCallerS0 secondSource s0
+saveCallerS0 base stackPointer
+saveCallerS0 offset SlotSavedS0
+saveCallerS0 effect memory.write
+saveCallerS0 memory region stackFrame
+saveCallerS0 saves s0 SlotSavedS0
+saveCallerS0 purpose "Preserve caller's s0 before the general case reuses it for level"
+
+branchLevelZero is insn
+branchLevelZero in Prologue
+branchLevelZero operation BranchIfZero
+branchLevelZero firstSource a0
+branchLevelZero target LevelZero
+branchLevelZero fallthrough CheckCount
+branchLevelZero reads level
+branchLevelZero condition "level == 0: answer is count + 1"
+
+# ---- CheckCount ----
+
+branchCountZero is insn
+branchCountZero in CheckCount
+branchCountZero operation BranchIfZero
+branchCountZero firstSource a1
+branchCountZero target CountZero
+branchCountZero fallthrough General
+branchCountZero reads count
+branchCountZero condition "count == 0: answer is ack(level-1, 1)"
+
+# ---- General: the nested-call clobber gauntlet ----
+
+moveLevelToS0 is insn
+moveLevelToS0 in General
+moveLevelToS0 operation Move
+moveLevelToS0 destination s0
+moveLevelToS0 firstSource a0
+moveLevelToS0 reads level
+moveLevelToS0 writes level
+moveLevelToS0 purpose "level -> s0 (callee-saved): the inner Call clobbers every a*/t* register"
+
+decrementCount is insn
+decrementCount in General
+decrementCount operation AddImmediate
+decrementCount destination a1
+decrementCount firstSource a1
+decrementCount immediate -1
+decrementCount reads count
+decrementCount purpose "inner argument: count - 1 (a0 still holds level — untouched)"
+
+callInner is insn
+callInner in General
+callInner operation Call
+callInner symbol ack
+callInner effect call
+callInner liveOut s0:level
+callInner purpose "a0 = ack(level, count-1). level survives in s0 — the fact the whole function hangs on"
+
+moveInnerResultToArgument is insn
+moveInnerResultToArgument in General
+moveInnerResultToArgument operation Move
+moveInnerResultToArgument destination a1
+moveInnerResultToArgument firstSource a0
+moveInnerResultToArgument purpose "inner result becomes the outer call's count argument"
+
+computeLevelMinusOne is insn
+computeLevelMinusOne in General
+computeLevelMinusOne operation AddImmediate
+computeLevelMinusOne destination a0
+computeLevelMinusOne firstSource s0
+computeLevelMinusOne immediate -1
+computeLevelMinusOne reads level
+computeLevelMinusOne purpose "outer argument: level - 1, reloaded from its callee-saved home"
+
+callOuter is insn
+callOuter in General
+callOuter operation Call
+callOuter symbol ack
+callOuter effect call
+callOuter writes result
+callOuter purpose "a0 = ack(level-1, innerResult); nothing must survive this call"
+
+# ---- Epilogue ----
+
+restoreReturnAddress is insn
+restoreReturnAddress in Epilogue
+restoreReturnAddress operation LoadDoubleword
+restoreReturnAddress destination returnAddress
+restoreReturnAddress base stackPointer
+restoreReturnAddress offset SlotReturnAddress
+restoreReturnAddress effect memory.read
+restoreReturnAddress memory region stackFrame
+restoreReturnAddress restores returnAddress SlotReturnAddress
+restoreReturnAddress purpose "Restore return address"
+
+restoreCallerS0 is insn
+restoreCallerS0 in Epilogue
+restoreCallerS0 operation LoadDoubleword
+restoreCallerS0 destination s0
+restoreCallerS0 base stackPointer
+restoreCallerS0 offset SlotSavedS0
+restoreCallerS0 effect memory.read
+restoreCallerS0 memory region stackFrame
+restoreCallerS0 restores s0 SlotSavedS0
+restoreCallerS0 purpose "Restore caller's s0 (callee-saved contract)"
+
+freeFrame is insn
+freeFrame in Epilogue
+freeFrame operation AddImmediate
+freeFrame destination stackPointer
+freeFrame firstSource stackPointer
+freeFrame immediate 32
+freeFrame effect stack.free
+freeFrame purpose "Free the frame"
+
+returnResult is insn
+returnResult in Epilogue
+returnResult operation Return
+returnResult returns result
+returnResult purpose "Return the Ackermann value in a0"
+
+# ---- LevelZero (targeted by Prologue; ends with an explicit jump) ----
+
+computeCountPlusOne is insn
+computeCountPlusOne in LevelZero
+computeCountPlusOne operation AddImmediate
+computeCountPlusOne destination a0
+computeCountPlusOne firstSource a1
+computeCountPlusOne immediate 1
+computeCountPlusOne reads count
+computeCountPlusOne writes result
+computeCountPlusOne purpose "result = count + 1"
+
+jumpLevelZeroDone is insn
+jumpLevelZeroDone in LevelZero
+jumpLevelZeroDone operation Jump
+jumpLevelZeroDone target Epilogue
+jumpLevelZeroDone purpose "Join the common epilogue"
+
+# ---- CountZero (targeted by CheckCount; ends with an explicit jump) ----
+
+decrementLevel is insn
+decrementLevel in CountZero
+decrementLevel operation AddImmediate
+decrementLevel destination a0
+decrementLevel firstSource a0
+decrementLevel immediate -1
+decrementLevel reads level
+decrementLevel purpose "argument: level - 1"
+
+loadOneAsCount is insn
+loadOneAsCount in CountZero
+loadOneAsCount operation LoadImmediate
+loadOneAsCount destination a1
+loadOneAsCount immediate 1
+loadOneAsCount purpose "argument: count = 1"
+
+callCountZero is insn
+callCountZero in CountZero
+callCountZero operation Call
+callCountZero symbol ack
+callCountZero effect call
+callCountZero writes result
+callCountZero purpose "a0 = ack(level-1, 1); nothing must survive this call"
+
+jumpCountZeroDone is insn
+jumpCountZeroDone in CountZero
+jumpCountZeroDone operation Jump
+jumpCountZeroDone target Epilogue
+jumpCountZeroDone purpose "Join the common epilogue"
