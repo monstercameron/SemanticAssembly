@@ -424,9 +424,11 @@ def _norm(s):
 
 
 def score_answers():
-    """Match runs/full/answers.json {name: raw_answer} against ground truth."""
+    """Collect runs/full/answers/*.txt and match against ground truth."""
     manifest = json.loads(_read(RUN / "manifest.json"))
-    answers = json.loads(_read(RUN / "answers.json"))
+    answers = {f.stem: _read(f).strip()
+               for f in sorted((RUN / "answers").glob("*.txt"))}
+    _write(RUN / "answers.json", json.dumps(answers, indent=1))
     graded = {}
     for name, raw in answers.items():
         cell = name.split("__")[0]
