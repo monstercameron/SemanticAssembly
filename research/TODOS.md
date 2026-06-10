@@ -13,14 +13,14 @@ Status reflects **expressibility**: `[x]` a construct/table exists · `[~]`
 partial or design-only · `[ ]` no construct yet.
 
 > **Status (current):** the toolchain runs. `parser.py` + `isa.py` + `emit.py`
-> (the projection π) + `validate.py` (the §14 catalog's enforced set, 26 codes
-> incl. `E-CFG-LAYOUT` and the call-result rule) + `cli.py` are implemented and
+> (the projection π) + `validate.py` (the ENTIRE §14 catalog — 32 codes, no
+> pending entries left) + `cli.py` are implemented and
 > tested; **thirteen** examples (incl. the gauntlet set: ackermann / quicksort /
 > revlist) emit byte-identical `.s` and execute correctly under qemu. What
-> remains is breadth (the rest of RVA23), one hard check (general
-> `E-DERIVABLE`), the remaining A3 edge codes, the empirical study (D1), and
-> the gated runtime-debug design (§18 / section G). Enumerated in **"Not yet
-> implemented"** immediately below.
+> remains is breadth (the rest of RVA23), the general `E-DERIVABLE` oracle
+> (the one open research item — its register and effect-restatement slices
+> are live), the empirical study (D1), and the gated real-binary debug
+> adapter (§18 / section G). Enumerated below.
 
 Vocabulary lives in `LANGUAGE.md`; ops in `OPCODES.md`/`optable.tsv`; data in
 `regs.tsv`, `abi.tsv`, `formats.tsv`, `extmap.tsv`, `syscalls.tsv`, `csr.tsv`.
@@ -38,7 +38,19 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 
 ## A. Validator — the one unfinished check
 
-### A1. General `E-DERIVABLE` reachability linter 🔴 ⚠ load-bearing
+### A1. General `E-DERIVABLE` reachability linter 🔴 — scope BOUNDED (2026-06-10)
+The trust reframe (DESIGN §2.1) collapsed most of A1's original targets:
+S-check facts that restate *derived truth* are now pinned CONTRACTS (a
+`liveOut` equal to computed liveness is a regression guard, by design — not
+dilution). What remains banned is the **zero-information copy**: a fact whose
+check is vacuous because it can never fail independently of the rows/tables it
+copies. All *enumerable* copies are now checked: register-named
+`reads`/`writes`, effect restatement (no qualifier, no memory facts), and
+`emitKind` restatement. The still-open research part is the general oracle —
+"could a tool re-derive this fact from A-facts + tables + dataflow, such that
+no future edit can make it fail?" — needed only for copies we have NOT
+enumerated. New predicates enter through the §10.5 gate (name your failure
+mode or be intent), which prevents new unenumerated copies by construction.
 - **What:** flag *any* S-fact reconstructable from A-facts + the tables — not just
   the register-name case in `reads`/`writes` (which is done). Examples to catch:
   an `effect memory.read` that merely restates the op-table effect with no region;
@@ -70,10 +82,10 @@ and **done-when** (acceptance). Difficulty: 🟢 small · 🟡 medium · 🔴 la
 - [ ] **Diagnostics fix-site uniformity** — handle + code everywhere; the
   "nearest def is X" hint is only on some messages. Polish later (DESIGN §5.1).
 
-### A3. Close the silent edges 🟡 ⚠ each verified by probe (2026-06-09)
-Every item below is a **specified-but-unenforced** rule (DESIGN §14 ◌ codes;
-LANGUAGE §10.5). Each was empirically confirmed to fail silently or crash.
-Priority order = blast radius.
+### A3. Close the silent edges — ✅ COMPLETE (2026-06-10)
+Every item below is now enforced; the completion pass landed the last ones.
+Each was originally an empirically-confirmed silent failure or crash. Kept as
+the audit ledger.
 
 - [x] **`E-CFG-LAYOUT`: fall-through adjacency** — ✅ DONE (gauntlet shakedown,
   2026-06-09): `_check_layout` enforces all four clauses (adjacency, rows after
@@ -81,27 +93,27 @@ Priority order = blast radius.
   syscall (`return -` in syscalls.tsv) counts as a terminator of kind `syscall`
   — which exposed and fixed four stale `terminates return` facts in shipped
   examples. The reorder probe now errors. Regression: `tests/test_gauntlet_shakedown.py`.
-- [ ] **`E-DUP`: duplicate single-valued facts** — *verified:* a second
-  `destination` row is silently dead (first wins), so an append-style agent
-  edit does nothing. Also: re-`is` declarations (silently re-type today),
-  case-insensitive block-handle collisions (`.L` labels are lowercased +
-  file-scoped), function/data/symbol label collisions.
-- [~] **`E-CFG-EDGE` exactness** — `terminates` cross-check ✅ DONE (in
-  `_check_layout`); still open: a declared `successor` the terminator cannot
-  take passes silently (widens every dataflow merge) + `predecessor` inverse.
-- [~] **Targeted entry block** — validator half ✅ DONE (`E-CFG-LAYOUT` rejects
-  it at check time); still open: implement the §15.1 label rule in `emit.py`
-  so the construct becomes legal instead of rejected.
-- [ ] **`E-DATA`** — *verified:* bss without `size` emits `.zero None`. Full
-  contract in LANGUAGE §6.
-- [ ] **`E-ORDER-KEY`** — *verified:* `ordinal ten` crashes emission with a
-  Python traceback. Validate integer-ness + per-block uniqueness.
-- [ ] **`E-PARSE` unterminated string** — *verified:* silently consumes to EOL.
-- [ ] **`clobbers` narrowing honored by liveness/value-flow** — today written
-  `clobbers` facts change no diagnostic (LANGUAGE §3 honesty note).
-- [ ] **`saves`/`restores` slot pairing + per-return-path completeness** —
-  set-wise check passes a function that restores on only one of two return
-  paths.
+- [x] **`E-DUP`** — ✅ DONE (completion pass): duplicate single-valued facts,
+  case-insensitive block-label collisions, assembler symbol collisions;
+  re-`is` is a parse error. Regressions: `tests/test_complete.py`.
+- [x] **`E-CFG-EDGE` exactness** — ✅ DONE: `terminates` cross-check, stale
+  successors (terminator-derived edge sets, both directions), and the
+  `predecessor` inverse when present.
+- [x] **Targeted entry block** — ✅ DONE both halves: the §15.1 label rule is
+  implemented in `emit.py` (`.L<entry>` after the function symbol) and the
+  construct is legal — the interim validator rejection is removed.
+- [x] **`E-DATA`** — ✅ DONE (edge audit, 2026-06-10): full LANGUAGE §6
+  contract enforced — bss size/value rules, Bytes size vs escaped length,
+  unknown type/section, `align` power-of-two (a zero align crashed exec).
+  Regressions: `tests/test_edges.py`.
+- [x] **`E-ORDER-KEY`** — ✅ DONE: integer-ness + per-block uniqueness; emit
+  falls back to source order instead of crashing; exec raises ExecError.
+- [x] **`E-PARSE` unterminated string** — ✅ DONE: a parse error.
+- [x] **`clobbers` narrowing** — ✅ DONE: honored by forward liveness,
+  backward liveness (`W-CLOBBER`), and value-flow; tokens `E-ISA-REG`-checked.
+- [x] **`saves`/`restores`** — ✅ DONE: SAME-slot pairing plus a per-path
+  forward proof (`_check_restore_paths`): every clobbered callee-saved
+  register and post-call `returnAddress` restored on EVERY path to a return.
 - [x] **`stack bytes` vs actual prologue** — ✅ DONE (lint audit, 2026-06-09):
   `E-STACK-BALANCE` proves per-path frame balance, merge consistency, call
   alignment, and allocation == declared bytes; `E-STACK-OP` makes every sp
@@ -114,13 +126,36 @@ Priority order = blast radius.
   ("the binding cannot exist"); `W-LINT` additionally flags any discarded
   result. Also new: `E-RESERVED` (gp/tp writes — abi.tsv's `reserved` row was
   the toolchain's only decorative table data).
-- [ ] Remaining §10.5 rows (`liveIn`/`liveAcross`/`clobberRisk`/`kills`/
-  `valueBindings complete`, `syscall` table check, `E-EXT-UNAVAILABLE`) — each
-  gains its check **or is demoted to S-intent / removed**; none may stay
-  unchecked-but-trusted.
+- [x] Remaining §10.5 rows — ✅ DONE, check-or-demote applied to every one:
+  `liveIn`/`kills` checked vs backward liveness; `valueBindings complete`
+  checked (reads-side) in value-flow; `syscall` names `E-REF`-checked;
+  `E-EXT-UNAVAILABLE` live (extmap.tsv × new profiles.tsv); value provenance
+  (`definedBy`/`storedIn`/`restoredBy`/`in`) cross-checked; `liveAcross` and
+  `clobberRisk` DEMOTED to S-intent (their checkable forms: `liveOut`,
+  `W-CLOBBER`).
 - **Done-when:** every probe in the 2026-06-09 audit produces a diagnostic (or
   a documented demotion); `tests/` gains a regression file per probe; the
   §10.5 ◌ table shrinks accordingly.
+
+### A4. Edge audit 2026-06-10 — ✅ ALL 14 FINDINGS FIXED
+An adversarial subagent probed parser/emit/validate/interp/fmt/CLI for unknown
+edges; all 14 verified findings landed as fixes the same day
+(`tests/test_edges.py`, 20 regressions):
+- **`E-ENTITY`** (new code): untyped/unknown-typed entities — code that
+  VANISHED from check+emit+exec with a clean bill of health — now error.
+- **Function-scoped ownership** (`E-REF`): targets/successors/slot-offsets may
+  not cross functions; referenced slots need integer offsets; `program entry`
+  must resolve. **Exactly one `entry yes` block** (`E-CFG-LAYOUT`).
+- **One integer grammar** (`E-ISA-FIELD`): decimal only — `0x…` validated
+  clean but crashed exec; `1_000_000` ran clean but emitted GAS-invalid `.s`.
+- **One `writes` per row** (`E-VALUE-FLOW`): static set vs runtime tag
+  disagreed.
+- **fmt integrity**: args containing `#`/`|`/`"` are quoted (a bare `#`
+  truncated re-parsed source); subjects/predicates are bare identifiers at
+  parse; `is` takes exactly one type.
+- **Crash → diagnostic discipline**: emit renders None instead of raising on
+  missing targets (§15.1 pinned for real); exec raises ExecError on unknown
+  registers / arg overflow / bad offsets / bad align; CLI usage errors exit 2.
 
 ## B. ISA breadth — beyond Tier A (the big one)
 
@@ -212,7 +247,16 @@ Priority order = blast radius.
 
 ## D. Validating the premise (the actual experiment) 🔴
 
-### D1. The premise benchmark — DESIGN §16.1 (4 arms × 3 families × 2 protocols)
+### D1. The premise benchmark — 🟢 HARNESS LIVE + FIRST PILOT RUN (2026-06-10)
+`benchmarks/d1.py` generates all four arms mechanically from one `.sasm`
+(provably same information) and scores every arm with one oracle (native
+build bar + qemu behavior). First pilot: Protocol 1, fib, 3 tasks x 4 arms,
+n=1 — **a/c/d 3/3, b 2/3**; the one failure was behaviorally-correct code
+with wrong spill annotations (the validator refused it — arm b's bar is
+strictly higher, and Protocol 2's diagnostics would have named the exact
+rows). Write-up with caveats: `benchmarks/runs/pilot/results.md`. Also
+produced a language finding (the spill idiom, now in LANGUAGE §3).
+Remaining for the full study (4 arms × 3 families × 2 protocols):
 - **What:** measure the three §2.1 pillars across four arms — (a) raw `.s`,
   (c) `.s` + prose fact block at top, (d) `.s` + same facts as **inline comments**
   (the critical control), (b) `.sasm` — over three task families: comprehension
@@ -288,6 +332,15 @@ Priority order = blast radius.
   tables).
 - [ ] **More mutation operators** (block reorder via text move, fact staleness
   injection, slot-collision) + run over the full example corpus in CI.
+- [ ] **Viewing lenses** (`sasm view <function>`, compact pipe-sugar render,
+  per-value slices) — the standing answer to the verbosity-for-humans and
+  context-cost critiques (§19 discussion; external review cons #1/#8). The
+  file is the database; readers should get queries, not the whole dump.
+- [x] **`W-RMW-RACE` + `memoryRegion concurrentWriters`** — ✅ DONE
+  (2026-06-10, from an external review's one novel finding): non-atomic
+  load-modify-store on a concurrent region is flagged; AMOs are the
+  sanctioned form; absence of the fact = explicit single-writer assumption.
+  Regressions: `tests/test_lint.py`.
 
 ## G. Runtime debug API — DESIGN §18 🔴 (real-binary half; gated)
 
@@ -451,7 +504,7 @@ Priority order = blast radius.
 - [ ] Generator from `riscv/riscv-opcodes` → Tier B/V/P table rows (§7.2) → **details: B1**
 - [x] **`isa.py`** — loads optable/regs TSVs (extend to abi/formats/etc. for the validator)
 - [x] **`emit.py`** — the projection `π`; **byte-identical** on all three examples (DESIGN §15.1); CLI `sasm emit|build|facts`
-- [x] **`validate.py`** — **§14 enforced set wired (26 codes)**, incl.
+- [x] **`validate.py`** — **the ENTIRE §14 catalog wired (32 codes)**, incl.
   `E-CFG-LAYOUT` (layout/terminator clauses, noreturn-syscall terminators), the
   `terminates` cross-check, the call-result `writes` binding (gauntlet
   shakedown, 2026-06-09), and the every-surface set (`E-RESERVED`,

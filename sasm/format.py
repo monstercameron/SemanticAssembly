@@ -23,7 +23,11 @@ from .model import Program
 
 
 def _render_arg(arg: str) -> str:
-    if arg == "" or any(c.isspace() for c in arg):
+    # quote anything the tokenizer treats specially outside quotes — a bare
+    # `#` would truncate the line as a comment, a bare `|` would split it
+    # into a pipe-sugar clause (the fmt-corruption finding, 2026-06 edge audit)
+    if arg == "" or any(c.isspace() for c in arg) or "#" in arg or "|" in arg \
+            or '"' in arg:
         return f'"{arg}"'
     return arg
 

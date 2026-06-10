@@ -108,3 +108,100 @@ def test_all_examples_stay_clean():
     for p in sorted((ROOT / "examples").glob("*/*.sasm")):
         diags = validate(parse(p.read_text(encoding="utf-8")))
         assert not [d for d in diags if d.severity == "error"], p.name
+
+
+# ------------------------------------------- W-RMW-RACE (review finding)
+
+RMW = """prog is program
+prog target rva23u64
+sharedRegs is memoryRegion
+sharedRegs kind device
+sharedRegs volatile yes
+sharedRegs concurrentWriters yes
+F is function
+F symbol f
+F in p Address a0
+F effect device.read sharedRegs
+F effect device.write sharedRegs
+F leaf yes
+F stack bytes 0
+p is value
+p type Address
+E is block
+E in F
+E entry yes
+E terminates return
+ld1 is insn
+ld1 in E
+ld1 operation LoadWord
+ld1 destination t0
+ld1 base a0
+ld1 offset 12
+ld1 effect device.read
+ld1 memory region sharedRegs
+or1 is insn
+or1 in E
+or1 operation OrImmediate
+or1 destination t0
+or1 firstSource t0
+or1 immediate 32
+st1 is insn
+st1 in E
+st1 operation StoreWord
+st1 secondSource t0
+st1 base a0
+st1 offset 12
+st1 effect device.write
+st1 memory region sharedRegs
+r1 is insn
+r1 in E
+r1 operation Return
+"""
+
+
+def test_rmw_on_concurrent_region_is_flagged():
+    from sasm.parser import parse as _p
+    from sasm.validate import validate as _v
+    assert any(d.code == "W-RMW-RACE" and d.handle == "st1"
+               for d in _v(_p(RMW)))
+
+
+def test_rmw_without_concurrent_writers_is_the_explicit_contract():
+    quiet = RMW.replace("sharedRegs concurrentWriters yes\n", "")
+    from sasm.parser import parse as _p
+    from sasm.validate import validate as _v
+    assert not any(d.code == "W-RMW-RACE" for d in _v(_p(quiet)))
+
+
+def test_amo_is_the_sanctioned_form():
+    atomic = RMW.replace("""ld1 operation LoadWord
+ld1 destination t0
+ld1 base a0
+ld1 offset 12""", """ld1 operation LoadWord
+ld1 destination t0
+ld1 base a0
+ld1 offset 12""")
+    # replace the load+or+store with a single AtomicOr at the same address
+    atomic = RMW
+    for h in ("ld1", "or1", "st1"):
+        atomic = "\n".join(l for l in atomic.splitlines()
+                           if not l.startswith(h + " ")) + "\n"
+    atomic = atomic.replace("r1 is insn", """amo1 is insn
+amo1 in E
+amo1 operation AtomicOr
+amo1 destination t0
+amo1 secondSource t1
+amo1 base a0
+amo1 effect device.write
+amo1 memory region sharedRegs
+seed1 is insn
+seed1 in E
+seed1 operation LoadImmediate
+seed1 destination t1
+seed1 immediate 32
+r1 is insn""")
+    # seed t1 before the AMO uses it: move seed1 before amo1 textually
+    from sasm.parser import parse as _p
+    from sasm.validate import validate as _v
+    diags = _v(_p(atomic))
+    assert not any(d.code == "W-RMW-RACE" for d in diags)

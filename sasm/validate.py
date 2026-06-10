@@ -54,8 +54,9 @@ def _op_width(spec: dict) -> int | None:
             if sem.endswith(suffix):
                 return n
         return 8
-    if cls in ("arith", "logic", "shift", "compare", "muldiv", "cond"):
-        return 4 if sem.endswith("Word") or "Word" in sem else 8
+    if cls in ("arith", "logic", "shift", "compare", "muldiv", "cond",
+               "zba", "zbb", "zbs"):
+        return 4 if ("Word" in sem and "Halfword" not in sem) else 8
     if cls == "atomic":
         return 8
     if cls in ("const", "pseudo", "jump"):
@@ -77,14 +78,37 @@ def _value_width(v) -> int | None:
     return None
 
 
+_INT = __import__("re").compile(r"-?\d+\Z")
+
+# every entity type the vocabulary defines (LANGUAGE) — anything else is a
+# typo that would make the entity invisible to every of_type/members_of walk
+KNOWN_TYPES = frozenset({
+    "program", "function", "block", "insn", "data", "stackSlot", "value",
+    "memoryRegion", "symbol", "parameter", "vectorConfig",
+})
+
+_DATA_WIDTH = {"Int8": 1, "Nat8": 1, "Boolean": 1, "Int16": 2, "Nat16": 2,
+               "Int32": 4, "Nat32": 4, "Int64": 8, "Nat64": 8, "Address": 8}
+
+
 def _is_int(s: str | None) -> bool:
-    if s is None:
-        return False
-    try:
-        int(s)
-        return True
-    except ValueError:
-        return False
+    """ONE integer grammar for the whole toolchain: decimal, optional minus.
+    (Python's int() accepts 0x… nowhere but '1_000_000' everywhere — a literal
+    that validated clean, executed clean, and emitted .s GAS rejects. One
+    grammar, three tools — 2026-06 edge audit.)"""
+    return s is not None and bool(_INT.match(s))
+
+
+def _escaped_length(s: str) -> int:
+    """byte length of a Bytes literal after assembler escapes (\\n etc.)."""
+    n, i = 0, 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s) and s[i + 1] in "ntr0\\\"":
+            i += 2
+        else:
+            i += 1
+        n += 1
+    return n
 
 
 def _observed_effects(prog: Program, fn: Entity, ops: dict, regions: dict) -> set[str]:
@@ -180,6 +204,107 @@ def _check_preserve(prog, fn, ops, abi, add) -> None:
 def _fn_insns(prog, fn):
     for blk in prog.members_of(fn.name, "block"):
         yield from prog.members_of(blk.name, "insn")
+
+
+# predicates that carry ONE authoritative slot per entity (LANGUAGE grammar
+# rules): a second row is dead text the first silently wins over — the exact
+# append-style-edit trap E-DUP exists for
+_SINGLE_VALUED = {
+    "insn": {"in", "operation", "destination", "firstSource", "secondSource",
+             "thirdSource", "base", "immediate", "offset", "symbol", "target",
+             "fallthrough", "ordinal", "syscall", "emitKind"},
+    "block": {"in", "entry", "terminates", "loop", "backEdgeTo"},
+    "function": {"symbol", "visibility", "binding", "abi", "leaf",
+                 "framePointer", "variadic", "privilege", "unwind"},
+    "data": {"section", "type", "value", "size", "align", "binding"},
+    "stackSlot": {"in", "offset", "type", "role", "size", "stores"},
+    "value": {"in", "type", "signed", "bits", "unit"},
+    "program": {"target", "xlen", "abi", "pic", "compressed", "emission",
+                "endian", "entry"},
+    "memoryRegion": {"kind", "volatile", "concurrentWriters"},
+    "symbol": {"external", "binding", "symbolType", "reloc", "linkerDefined"},
+}
+
+
+def _check_dup(prog, add) -> None:
+    """E-DUP: duplicate single-valued facts, case-insensitive block-label
+    collisions (`.L` labels are lowercased and file-scoped), and assembler
+    symbol collisions across functions/data/symbol entities."""
+    for e in prog.entities.values():
+        singles = _SINGLE_VALUED.get(e.type, set())
+        for pred, rows in e.facts.items():
+            if pred in singles and len(rows) > 1:
+                add("error", "E-DUP", e.name,
+                    f"`{pred}` appears {len(rows)} times but is "
+                    f"single-valued — only the first row is read; the "
+                    f"duplicates are dead text (edit the row, never append)")
+
+    by_label: dict[str, list[str]] = {}
+    for b in prog.of_type("block"):
+        by_label.setdefault(b.name.lower(), []).append(b.name)
+    for low, names in by_label.items():
+        if len(names) > 1:
+            add("error", "E-DUP", names[1],
+                f"block handles {names} collide case-insensitively — emitted "
+                f"labels are `.L{low}` for both (the .L namespace is "
+                f"file-scoped and lowercased)")
+
+    emitted: dict[str, list[str]] = {}
+    for f in prog.of_type("function"):
+        emitted.setdefault(f.scalar("symbol", f.name), []).append(f.name)
+    for d in prog.of_type("data"):
+        emitted.setdefault(d.name, []).append(d.name)
+    for s in prog.of_type("symbol"):
+        emitted.setdefault(s.name, []).append(s.name)
+    for sym, owners in emitted.items():
+        if len(owners) > 1:
+            add("error", "E-DUP", owners[1],
+                f"label `{sym}` is emitted by multiple entities {owners} — "
+                f"the assembler namespace is one flat scope")
+
+
+def _call_clobbers(insn, caller_saved) -> set:
+    """A Call's clobber set: the full ABI caller-saved set by default,
+    narrowed by declared `clobbers <reg>...` facts for a known callee
+    (LANGUAGE §3). `clobbers callerSaved` is the explicit default."""
+    regs = [x for row in insn.all("clobbers") for x in row]
+    if not regs or "callerSaved" in regs:
+        return set(caller_saved)
+    return set(regs) | {"returnAddress"}
+
+
+def _check_rmw(prog, fn, ops, concurrent, add) -> None:
+    """W-RMW-RACE (external review finding, 2026-06-10): naming an RMW hazard
+    does not make it atomic. A plain load-modify-store to the same address on
+    a region declared `concurrentWriters yes` (interrupt handlers, other
+    cores, DMA) can lose updates between the load and the store. Flag it:
+    use an atomic op, mask interrupts, or take a lock. Regions WITHOUT the
+    fact carry the explicit single-writer assumption — that is the contract."""
+    if not concurrent:
+        return
+    for blk in prog.members_of(fn.name, "block"):
+        pending: dict[tuple, str] = {}      # (base, offset) -> loading handle
+        for i in prog.members_of(blk.name, "insn"):
+            spec = ops.get(i.scalar("operation"))
+            if not spec:
+                continue
+            region = None
+            for r in i.all("memory"):
+                if len(r) >= 2 and r[0] == "region":
+                    region = r[1]
+            if region not in concurrent:
+                continue
+            key = (i.scalar("base"), i.scalar("offset"))
+            if spec["class"] == "load":
+                pending[key] = i.name
+            elif spec["class"] == "store" and key in pending:
+                add("warning", "W-RMW-RACE", i.name,
+                    f"non-atomic read-modify-write on `{region}` "
+                    f"(concurrentWriters yes): loaded at {pending[key]}, "
+                    f"stored here — a concurrent writer between the two loses "
+                    f"updates. Use an atomic op, mask interrupts, or lock")
+            elif spec["class"] == "atomic":
+                pending.pop(key, None)      # AMO is the sanctioned form
 
 
 def _check_lint(prog, fn, ops, abi, add) -> None:
@@ -301,6 +426,82 @@ def _check_stack(prog, fn, ops, syscalls, add) -> None:
             f"is {-min_off}")
 
 
+def _check_restore_paths(prog, fn, ops, abi, syscalls, add) -> None:
+    """E-ABI-PRESERVE, the per-path half: every clobbered callee-saved
+    register (and returnAddress after any call) must be restored on EVERY
+    path to a return — the set-wise check passes a function that restores on
+    only one of two return paths. Also: each `saves r slot` must pair with a
+    `restores r slot` through the SAME slot."""
+    blocks = prog.members_of(fn.name, "block")
+    if not blocks:
+        return
+    blocks.sort(key=lambda b: (b.scalar("entry") != "yes", b.order))
+    names = {b.name for b in blocks}
+    abikey = fn.scalar("abi") or "linux.riscv64"
+    tracked = (set(abi.get(abikey, {}).get("calleeSaved", []))
+               - {"stackPointer"}) | {"returnAddress"}
+
+    saves_pairs, restores_pairs = set(), set()
+    for blk in blocks:
+        for i in prog.members_of(blk.name, "insn"):
+            for r in i.all("saves"):
+                if len(r) >= 2:
+                    saves_pairs.add((r[0], r[1]))
+            for r in i.all("restores"):
+                if len(r) >= 2:
+                    restores_pairs.add((r[0], r[1]))
+    for reg, slot in sorted(saves_pairs - restores_pairs):
+        add("error", "E-ABI-PRESERVE", fn.name,
+            f"saves {reg} to {slot} but never restores through that slot — "
+            f"save/restore must pair through the SAME named slot")
+    for reg, slot in sorted(restores_pairs - saves_pairs):
+        add("error", "E-ABI-PRESERVE", fn.name,
+            f"restores {reg} from {slot} but never saves through that slot")
+
+    blk_by = {b.name: b for b in blocks}
+    dirty_in: dict[str, frozenset] = {blocks[0].name: frozenset()}
+    worklist = [blocks[0].name]
+    flagged = set()
+    while worklist:
+        bname = worklist.pop()
+        dirty = set(dirty_in[bname])
+        noreturn = False
+        for i in prog.members_of(bname, "insn"):
+            spec = ops.get(i.scalar("operation"))
+            if not spec:
+                continue
+            restored_here = {r[0] for r in i.all("restores") if r}
+            if restored_here:
+                dirty -= restored_here
+            else:
+                defs = _role_regs(i, spec["defines"])
+                if spec["control"] == "call":
+                    defs = defs | {"returnAddress"}
+                dirty |= defs & tracked
+            if spec["control"] == "return":
+                for r in sorted(dirty):
+                    if (bname, r) not in flagged:
+                        flagged.add((bname, r))
+                        add("error", "E-ABI-PRESERVE", i.name,
+                            f"{r} is clobbered but not restored on the path "
+                            f"through {bname}")
+            if spec["control"] == "syscall":
+                row = syscalls.get(i.scalar("syscall") or "")
+                if row and row.get("return") == "-":
+                    noreturn = True
+        if noreturn:
+            continue
+        new = frozenset(dirty)
+        for s in blk_by[bname].values("successor"):
+            if s not in names:
+                continue
+            prev = dirty_in.get(s)
+            merged = new if prev is None else frozenset(prev | new)
+            if prev is None or merged != prev:
+                dirty_in[s] = merged
+                worklist.append(s)
+
+
 _TERMINATOR_KINDS = {"branch", "jump", "return", "syscall"}
 
 
@@ -320,6 +521,14 @@ def _check_layout(prog, fn, ops, syscalls, add) -> None:
     blocks = prog.members_of(fn.name, "block")
     if not blocks:
         return
+    n_entry = sum(1 for b in blocks if b.scalar("entry") == "yes")
+    if n_entry != 1:
+        # >1: the emitter suppresses EVERY entry label, so a branch to the
+        # second produces an undefined-label .s; 0: "first block" is an
+        # accident of declaration order. Either way layout is underdetermined.
+        add("error", "E-CFG-LAYOUT", fn.name,
+            f"has {n_entry} blocks marked `entry yes` — exactly one is "
+            f"required (layout and the function label hang on it)")
     blocks.sort(key=lambda b: (b.scalar("entry") != "yes", b.order))
     names = {b.name for b in blocks}
     entry = blocks[0].name if blocks[0].scalar("entry") == "yes" else None
@@ -341,12 +550,6 @@ def _check_layout(prog, fn, ops, syscalls, add) -> None:
     for b in blocks:
         insns = prog.members_of(b.name, "insn")
         kinds = [kind_of(i) for i in insns]
-        for i in insns:
-            tgt = i.scalar("target")
-            if entry and tgt == entry:
-                add("error", "E-CFG-LAYOUT", i.name,
-                    f"targets the entry block {entry}: its label is suppressed "
-                    f"by the emitter (§15.1) — branch to a non-entry block")
 
         # (1) terminator must be last
         term_at = next((k for k, c in enumerate(kinds)
@@ -402,6 +605,45 @@ def _check_layout(prog, fn, ops, syscalls, add) -> None:
                     f"falls through to {succ[0]} but the next block in layout "
                     f"is {nxt[b.name]} — reorder the blocks or make the edge "
                     f"an explicit Jump row")
+
+    # ---- successor exactness + predecessor inverse (§13 step 2, both ways) ----
+    expected: dict[str, set] = {}
+    for b in blocks:
+        insns = prog.members_of(b.name, "insn")
+        kinds = [kind_of(i) for i in insns]
+        last = insns[-1] if insns else None
+        ctrl = kinds[-1] if kinds else "seq"
+        if ctrl == "branch":
+            tgt = last.scalar("target")
+            ft = last.scalar("fallthrough")
+            if ft is None:
+                rest = [s for s in b.values("successor")
+                        if s in names and s != tgt]
+                ft = rest[0] if len(rest) == 1 else None
+            expected[b.name] = {x for x in (tgt, ft) if x in names}
+        elif ctrl == "jump":
+            expected[b.name] = {last.scalar("target")} & names
+        elif ctrl in ("return", "syscall"):
+            expected[b.name] = set()
+        else:
+            expected[b.name] = {nxt[b.name]} if nxt[b.name] else set()
+    for b in blocks:
+        declared = {s for s in b.values("successor") if s in names}
+        for stale in sorted(declared - expected[b.name]):
+            add("error", "E-CFG-EDGE", b.name,
+                f"declares `successor {stale}` but the terminator cannot take "
+                f"that edge — a stale edge silently widens every dataflow merge")
+    computed_preds = {b.name: set() for b in blocks}
+    for b in blocks:
+        for s in expected[b.name]:
+            computed_preds[s].add(b.name)
+    for b in blocks:
+        declared = {p for p in b.values("predecessor") if p in names}
+        if declared and declared != computed_preds[b.name]:
+            add("error", "E-CFG-EDGE", b.name,
+                f"declares predecessors {sorted(declared)} but the CFG "
+                f"computes {sorted(computed_preds[b.name])} — `predecessor` "
+                f"must be the exact inverse of `successor` when present")
 
 
 def _check_reachability(prog, fn, add) -> None:
@@ -469,6 +711,20 @@ def _check_value_flow(prog, fn, ops, abi, value_names, add) -> None:
                     if emit and poss and v not in poss:
                         add("error", "E-VALUE-FLOW", i.name,
                             f"reads {v} but {sorted(srcs)} hold {sorted(poss)}")
+            # `valueBindings complete`: every source register holding a single
+            # known value must be listed in this row's `reads` (the opt-in
+            # exhaustiveness contract, LANGUAGE §3 — reads-side)
+            if emit and any(r and r[0] == "complete"
+                            for r in i.all("valueBindings")):
+                declared_reads = {r[0] for r in i.all("reads") if r}
+                for r in srcs:
+                    poss = st.get(r, set())
+                    if len(poss) == 1:
+                        held = next(iter(poss))
+                        if held in value_names and held not in declared_reads:
+                            add("error", "E-VALUE-FLOW", i.name,
+                                f"declares `valueBindings complete` but reads "
+                                f"{held} (in {r}) is not listed")
             # `requires <value> in <reg>`: the value must occupy that register here
             for row in i.all("requires"):
                 if len(row) >= 3 and row[1] == "in" and row[0] in value_names:
@@ -486,7 +742,7 @@ def _check_value_flow(prog, fn, ops, abi, value_names, add) -> None:
                             add("error", "E-VALUE-FLOW", i.name,
                                 f"returns {v} but {sorted(out_regs)} hold {sorted(poss)}")
             if spec["control"] == "call":
-                for r in caller_saved:
+                for r in _call_clobbers(i, caller_saved):
                     st[r] = {f"·call:{i.name}:{r}"}
             writes = [w[0] for w in i.all("writes") if w]
             dests = _role_regs(i, spec["defines"])
@@ -546,9 +802,9 @@ def _check_liveness(prog, fn, ops, abi, regs, add) -> None:
         if spec is None:
             return set()
         d = _role_regs(i, spec["defines"])
-        if spec["control"] == "call":            # conservative: a call lands a
-            d |= caller_saved | {"returnAddress"}  # value in every caller-saved reg
-        return d
+        if spec["control"] == "call":            # conservative by default,
+            d |= _call_clobbers(i, caller_saved) | {"returnAddress"}
+        return d                                  # narrowed by `clobbers` facts
 
     def insn_use(i):
         spec = ops.get(i.scalar("operation"))
@@ -634,7 +890,7 @@ def _check_backward(prog, fn, ops, abi, add) -> None:
         spec = ops.get(i.scalar("operation"))
         d = real_def(i)
         if spec and spec["control"] == "call":
-            d |= caller_saved | {"returnAddress"}
+            d |= _call_clobbers(i, caller_saved) | {"returnAddress"}
         return d
 
     def use(i):
@@ -676,9 +932,10 @@ def _check_backward(prog, fn, ops, abi, add) -> None:
             spec = ops.get(i.scalar("operation"))
             ctrl = spec["control"] if spec else ""
             if ctrl == "call":
-                for r in sorted(live_out_i & caller_saved - produced):
+                for r in sorted(live_out_i & _call_clobbers(i, caller_saved)
+                                - produced):
                     add("warning", "W-CLOBBER", i.name,
-                        f"{r} is live across this call but caller-saved (clobbered)")
+                        f"{r} is live across this call but in its clobber set")
             elif ctrl not in ("syscall",):
                 # skip argument registers: their liveness across calls is modelled
                 # only coarsely (we can't see undeclared call args), so a "dead"
@@ -694,7 +951,19 @@ def _check_backward(prog, fn, ops, abi, add) -> None:
                 if reg not in live_out_i:
                     add("error", "E-LIVE-ASSERT", i.name,
                         f"declares `liveOut {row[0]}` but {reg} is not live here")
+            # a declared kill means the register is dead AFTER this row
+            for row in i.all("kills"):
+                if row and row[0] in live_out_i:
+                    add("error", "E-LIVE-ASSERT", i.name,
+                        f"declares `kills {row[0]}` but it is still live after "
+                        f"this row")
             cur = (cur - full_def(i)) | use(i)
+            # a declared liveIn means the register is live ENTERING this row
+            for row in i.all("liveIn"):
+                if row and row[0].split(":")[0] not in cur:
+                    add("error", "E-LIVE-ASSERT", i.name,
+                        f"declares `liveIn {row[0]}` but "
+                        f"{row[0].split(':')[0]} is not live entering this row")
 
 
 def validate(prog: Program) -> list[Diagnostic]:
@@ -709,19 +978,125 @@ def validate(prog: Program) -> list[Diagnostic]:
     def add(sev, code, handle, msg):
         diags.append(Diagnostic(sev, code, handle, msg))
 
+    # ---------- entity typing: nothing may be invisible (E-ENTITY) ----------
+    # An entity with facts but no `is` row — or a typo'd type — is skipped by
+    # every of_type/members_of walk: its code VANISHES from check, emit, and
+    # exec with a clean bill of health (the worst finding of the 2026-06 edge
+    # audit). §2.1's invariant makes this an error, not a shrug.
+    for e in prog.entities.values():
+        if e.type is None and e.facts:
+            add("error", "E-ENTITY", e.name,
+                f"has {sum(len(r) for r in e.facts.values())} fact row(s) but "
+                f"no `is <type>` declaration — every tool would silently "
+                f"ignore it")
+        elif e.type is not None and e.type not in KNOWN_TYPES:
+            add("error", "E-ENTITY", e.name,
+                f"`is {e.type}` is not a known entity type — the entity would "
+                f"be invisible to every walk (did you mean one of "
+                f"{sorted(KNOWN_TYPES)}?)")
+
     blocks = {e.name for e in prog.of_type("block")}
     funcs = {e.name for e in prog.of_type("function")}
     value_ent = {e.name: e for e in prog.of_type("value")}
     values = set(value_ent)
+    block_fn = {b.name: b.scalar("in") for b in prog.of_type("block")}
+    slot_ent = {e.name: e for e in prog.of_type("stackSlot")}
+    fn_symbols = {f.scalar("symbol", f.name) for f in prog.of_type("function")}
 
-    # a declared phi (`mergesFrom`, LANGUAGE §4) must name a declared value
+    _check_dup(prog, add)
+
+    # target profile -> available extensions (E-EXT-UNAVAILABLE)
+    extmap = isa.load_extmap()
+    profiles = isa.load_profiles()
+    progent = next(iter(prog.of_type("program")), None)
+    target_name = progent.scalar("target") if progent else None
+    profile_exts = None
+    if target_name is not None:
+        profile_exts = profiles.get(target_name)
+        if profile_exts is None:
+            add("error", "E-EXT-UNAVAILABLE", progent.name,
+                f"unknown target profile {target_name!r} (known: "
+                f"{sorted(profiles)})")
+
+    # `program entry` must resolve to a function symbol (a misspelled entry
+    # was silently ignored by check AND exec --start fell back anyway)
+    for p in prog.of_type("program"):
+        ent_sym = p.scalar("entry")
+        if ent_sym is not None and ent_sym not in fn_symbols:
+            add("error", "E-REF", p.name,
+                f"`entry {ent_sym}` matches no function symbol")
+
+    # ---------- the data contract (E-DATA) ----------
+    for d in prog.of_type("data"):
+        section = d.scalar("section", "data")
+        typ, val, size = d.scalar("type"), d.scalar("value"), d.scalar("size")
+        align = d.scalar("align")
+        if section not in ("rodata", "data", "bss"):
+            add("error", "E-DATA", d.name, f"unknown section {section!r}")
+        if typ is not None and typ != "Bytes" and typ not in _DATA_WIDTH:
+            add("error", "E-DATA", d.name,
+                f"unknown data type {typ!r} (would silently emit .dword)")
+        if section == "bss":
+            if val is not None:
+                add("error", "E-DATA", d.name,
+                    "bss data cannot carry a `value` (it is reserved, not "
+                    "initialized)")
+            if not _is_int(size):
+                add("error", "E-DATA", d.name,
+                    "bss data requires an integer `size` (else it emits "
+                    "`.zero None`)")
+        elif val is None:
+            add("error", "E-DATA", d.name,
+                f"{section} data requires a `value`")
+        if typ == "Bytes" and val is not None and _is_int(size) \
+                and _escaped_length(val) != int(size):
+            add("error", "E-DATA", d.name,
+                f"declares size {size} but the Bytes literal is "
+                f"{_escaped_length(val)} bytes after escapes — the emitter "
+                f"trusts `size` for .size and does not recount")
+        if align is not None:
+            if not _is_int(align) or int(align) < 1 \
+                    or (int(align) & (int(align) - 1)) != 0:
+                add("error", "E-DATA", d.name,
+                    f"`align {align}` must be a power of two >= 1")
+
+    # a declared phi (`mergesFrom`, LANGUAGE §4) must name a declared value;
+    # provenance facts must resolve and agree with what they point at
+    insn_ent = {e.name: e for e in prog.of_type("insn")}
     for v in value_ent.values():
         for r in v.all("mergesFrom"):
             if r and r[0] not in values:
                 add("error", "E-REF", v.name,
                     f"`mergesFrom {r[0]}` is not a declared value")
+        vin = v.scalar("in")
+        if vin is not None and vin not in funcs:
+            add("error", "E-REF", v.name, f"`in {vin}` is not a function")
+        db = v.scalar("definedBy")
+        if db is not None:
+            producer = insn_ent.get(db)
+            if producer is None:
+                add("error", "E-REF", v.name,
+                    f"`definedBy {db}` is not an insn")
+            elif v.name not in {r[0] for r in producer.all("writes") if r}:
+                add("error", "E-REF", v.name,
+                    f"`definedBy {db}` but that row does not `writes {v.name}`")
+        si = v.scalar("storedIn")
+        if si is not None:
+            slot = slot_ent.get(si)
+            if slot is None:
+                add("error", "E-REF", v.name,
+                    f"`storedIn {si}` is not a stackSlot")
+            elif slot.scalar("stores") not in (None, v.name):
+                add("error", "E-REF", v.name,
+                    f"`storedIn {si}` but that slot stores "
+                    f"{slot.scalar('stores')!r}")
+        rb = v.scalar("restoredBy")
+        if rb is not None and rb not in insn_ent:
+            add("error", "E-REF", v.name, f"`restoredBy {rb}` is not an insn")
     slots = {e.name for e in prog.of_type("stackSlot")}
     regions = {e.name: e.scalar("kind") for e in prog.of_type("memoryRegion")}
+    concurrent_regions = {e.name for e in prog.of_type("memoryRegion")
+                          if e.scalar("concurrentWriters") == "yes"}
 
     # ---------- instruction-level structural checks ----------
     for insn in prog.of_type("insn"):
@@ -744,13 +1119,87 @@ def validate(prog: Program) -> list[Diagnostic]:
         inb = insn.scalar("in")
         if inb is not None and inb not in blocks:
             add("error", "E-REF", insn.name, f"`in {inb}` is not a block")
+        my_fn = block_fn.get(inb)
         tgt = insn.scalar("target")
         if tgt is not None and tgt not in blocks:
             add("error", "E-REF", insn.name, f"`target {tgt}` is not a block")
-        off = insn.scalar("offset")
-        if off is not None and not _is_int(off) and off not in slots:
+        elif tgt is not None and my_fn is not None \
+                and block_fn.get(tgt) != my_fn:
             add("error", "E-REF", insn.name,
-                f"`offset {off}` is neither an integer nor a stackSlot")
+                f"`target {tgt}` belongs to {block_fn.get(tgt)}, not "
+                f"{my_fn} — control may not jump between functions' bodies")
+        off = insn.scalar("offset")
+        if off is not None and not _is_int(off):
+            slot = slot_ent.get(off)
+            if slot is None:
+                add("error", "E-REF", insn.name,
+                    f"`offset {off}` is neither an integer nor a stackSlot")
+            else:
+                if my_fn is not None and slot.scalar("in") != my_fn:
+                    add("error", "E-REF", insn.name,
+                        f"`offset {off}` names a slot in "
+                        f"{slot.scalar('in')}'s frame, not {my_fn}'s — that "
+                        f"address is someone else's memory")
+                if not _is_int(slot.scalar("offset")):
+                    add("error", "E-REF", insn.name,
+                        f"stackSlot {off} has no integer `offset` — the "
+                        f"emitter would write `None(sp)`")
+
+        if len(insn.all("writes")) > 1:
+            add("error", "E-VALUE-FLOW", insn.name,
+                "more than one `writes` row — a row binds exactly one value "
+                "(the static set-union and the runtime tag would disagree)")
+
+        imm = insn.scalar("immediate")
+        if imm is not None and not _is_int(imm):
+            add("error", "E-ISA-FIELD", insn.name,
+                f"`immediate {imm}` is not a decimal integer — one grammar "
+                f"for all tools (hex/underscores diverge between check, "
+                f"emit, and exec)")
+
+        # extension gating: the op's class must be available in the target
+        if profile_exts is not None:
+            ext = extmap.get(spec["class"])
+            if ext and ext not in profile_exts:
+                add("error", "E-EXT-UNAVAILABLE", insn.name,
+                    f"{op} needs extension {ext}, which `target "
+                    f"{target_name}` does not include")
+
+        # a `syscall <name>` must exist in syscalls.tsv (its number/noreturn
+        # semantics drive the layout and runtime checks)
+        sc = insn.scalar("syscall")
+        if sc is not None and sc not in syscalls:
+            add("error", "E-REF", insn.name,
+                f"`syscall {sc}` is not in syscalls.tsv")
+
+        # an effect row that merely restates the op table, with no region
+        # qualifier and no memory facts, is a derivable copy (A1 slice)
+        efacts = [r for r in insn.all("effect") if r]
+        if len(efacts) == 1 and len(efacts[0]) == 1 \
+                and efacts[0][0] == spec["effect"] and spec["effect"] != "none" \
+                and not insn.has("memory"):
+            add("error", "E-DERIVABLE", insn.name,
+                f"`effect {spec['effect']}` restates the op table with no "
+                f"qualifier — derivable; add a region or drop the row")
+
+        # emitKind: the table already knows pseudo/real — a matching
+        # declaration is a zero-information copy (A1), a mismatched one a lie
+        ek = insn.scalar("emitKind")
+        if ek is not None:
+            derived = "pseudo" if spec["class"] == "pseudo" else "real"
+            if ek == derived:
+                add("error", "E-DERIVABLE", insn.name,
+                    f"`emitKind {ek}` restates the op table — derivable copy")
+            else:
+                add("error", "E-ISA-FIELD", insn.name,
+                    f"`emitKind {ek}` contradicts the op table ({derived})")
+
+        # clobbers facts must name registers (or the literal `callerSaved`)
+        for row in insn.all("clobbers"):
+            for tok in row:
+                if tok != "callerSaved" and tok not in regs:
+                    add("error", "E-ISA-REG", insn.name,
+                        f"`clobbers {tok}` is not a register")
         # effect/memory region qualifiers must resolve to declared regions
         for r in insn.all("effect"):
             if len(r) >= 2 and r[0].split(".")[0] in ("memory", "device") \
@@ -807,12 +1256,31 @@ def validate(prog: Program) -> list[Diagnostic]:
         inf = blk.scalar("in")
         if inf is not None and inf not in funcs:
             add("error", "E-REF", blk.name, f"`in {inf}` is not a function")
+        for s in blk.values("successor"):
+            if s in blocks and block_fn.get(s) != blk.scalar("in"):
+                add("error", "E-REF", blk.name,
+                    f"`successor {s}` belongs to {block_fn.get(s)}, not "
+                    f"{blk.scalar('in')} — CFG edges stay within a function")
 
         insns = prog.members_of(blk.name, "insn")
         ords = [i.scalar("ordinal") for i in insns]
         if any(o is not None for o in ords) and any(o is None for o in ords):
             add("error", "E-ORDER-MIXED", blk.name,
                 "block mixes ordinaled and bare instructions")
+        seen_ords: dict[str, str] = {}
+        for i in insns:
+            o = i.scalar("ordinal")
+            if o is None:
+                continue
+            if not _is_int(o):
+                add("error", "E-ORDER-KEY", i.name,
+                    f"`ordinal {o}` is not a decimal integer")
+            elif o in seen_ords:
+                add("error", "E-ORDER-KEY", i.name,
+                    f"`ordinal {o}` duplicates {seen_ords[o]}'s — order "
+                    f"would be ambiguous")
+            else:
+                seen_ords[o] = i.name
 
         succ = {r[0] for r in blk.all("successor") if r}
         for i in insns:
@@ -875,7 +1343,9 @@ def validate(prog: Program) -> list[Diagnostic]:
                     f"`effect {r[0]} {r[1]}` names an undeclared memoryRegion")
 
         _check_preserve(prog, fn, ops, abi, add)
+        _check_restore_paths(prog, fn, ops, abi, syscalls, add)
         _check_lint(prog, fn, ops, abi, add)
+        _check_rmw(prog, fn, ops, concurrent_regions, add)
         _check_stack(prog, fn, ops, syscalls, add)
         _check_layout(prog, fn, ops, syscalls, add)
         _check_liveness(prog, fn, ops, abi, regs, add)

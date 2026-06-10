@@ -83,3 +83,26 @@ AtomicMinimumSigned	amomin.d	atomic	R	destination	secondSource,base	memory.write
 AtomicMaximumUnsigned	amomaxu.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amomaxu.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = maximumUnsigned(destination, secondSource) (atomic)
 AtomicMinimumUnsigned	amominu.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amominu.d {destination}, {secondSource}, ({base})	destination = memory64[base]; memory64[base] = minimumUnsigned(destination, secondSource) (atomic)
 AtomicCompareAndSwap	amocas.d	atomic	R	destination	secondSource,base	memory.write	seq	A	amocas.d {destination}, {secondSource}, ({base})	if memory64[base] equals destination: memory64[base] = secondSource; destination = original memory value (Zacas)
+AddShiftedBy1	sh1add	zba	R	destination	firstSource,secondSource	none	seq	B	sh1add {destination}, {firstSource}, {secondSource}	destination = (firstSource shiftedLeftBy 1) + secondSource
+AddShiftedBy2	sh2add	zba	R	destination	firstSource,secondSource	none	seq	B	sh2add {destination}, {firstSource}, {secondSource}	destination = (firstSource shiftedLeftBy 2) + secondSource
+AddShiftedBy3	sh3add	zba	R	destination	firstSource,secondSource	none	seq	B	sh3add {destination}, {firstSource}, {secondSource}	destination = (firstSource shiftedLeftBy 3) + secondSource
+AndNot	andn	zbb	R	destination	firstSource,secondSource	none	seq	B	andn {destination}, {firstSource}, {secondSource}	destination = firstSource and (not secondSource)
+OrNot	orn	zbb	R	destination	firstSource,secondSource	none	seq	B	orn {destination}, {firstSource}, {secondSource}	destination = firstSource or (not secondSource)
+ExclusiveNor	xnor	zbb	R	destination	firstSource,secondSource	none	seq	B	xnor {destination}, {firstSource}, {secondSource}	destination = not (firstSource exclusiveOr secondSource)
+CountLeadingZeros	clz	zbb	R	destination	firstSource	none	seq	B	clz {destination}, {firstSource}	destination = number of leading zero bits in firstSource
+CountTrailingZeros	ctz	zbb	R	destination	firstSource	none	seq	B	ctz {destination}, {firstSource}	destination = number of trailing zero bits in firstSource
+CountSetBits	cpop	zbb	R	destination	firstSource	none	seq	B	cpop {destination}, {firstSource}	destination = number of set bits in firstSource
+Minimum	min	zbb	R	destination	firstSource,secondSource	none	seq	B	min {destination}, {firstSource}, {secondSource}	destination = minimumSigned(firstSource, secondSource)
+Maximum	max	zbb	R	destination	firstSource,secondSource	none	seq	B	max {destination}, {firstSource}, {secondSource}	destination = maximumSigned(firstSource, secondSource)
+MinimumUnsigned	minu	zbb	R	destination	firstSource,secondSource	none	seq	B	minu {destination}, {firstSource}, {secondSource}	destination = minimumUnsigned(firstSource, secondSource)
+MaximumUnsigned	maxu	zbb	R	destination	firstSource,secondSource	none	seq	B	maxu {destination}, {firstSource}, {secondSource}	destination = maximumUnsigned(firstSource, secondSource)
+SignExtendByte	sext.b	zbb	R	destination	firstSource	none	seq	B	sext.b {destination}, {firstSource}	destination = signExtend8(firstSource)
+SignExtendHalfword	sext.h	zbb	R	destination	firstSource	none	seq	B	sext.h {destination}, {firstSource}	destination = signExtend16(firstSource)
+ZeroExtendHalfword	zext.h	zbb	R	destination	firstSource	none	seq	B	zext.h {destination}, {firstSource}	destination = zeroExtend16(firstSource)
+RotateLeft	rol	zbb	R	destination	firstSource,secondSource	none	seq	B	rol {destination}, {firstSource}, {secondSource}	destination = firstSource rotatedLeftBy (secondSource and 63)
+RotateRight	ror	zbb	R	destination	firstSource,secondSource	none	seq	B	ror {destination}, {firstSource}, {secondSource}	destination = firstSource rotatedRightBy (secondSource and 63)
+RotateRightImmediate	rori	zbb	I	destination	firstSource	none	seq	B	rori {destination}, {firstSource}, {immediate}	destination = firstSource rotatedRightBy immediate
+ReverseBytes	rev8	zbb	R	destination	firstSource	none	seq	B	rev8 {destination}, {firstSource}	destination = firstSource with byte order reversed
+SetBit	bset	zbs	R	destination	firstSource,secondSource	none	seq	B	bset {destination}, {firstSource}, {secondSource}	destination = firstSource or (1 shiftedLeftBy (secondSource and 63))
+ClearBit	bclr	zbs	R	destination	firstSource,secondSource	none	seq	B	bclr {destination}, {firstSource}, {secondSource}	destination = firstSource and not (1 shiftedLeftBy (secondSource and 63))
+ExtractBit	bext	zbs	R	destination	firstSource,secondSource	none	seq	B	bext {destination}, {firstSource}, {secondSource}	destination = (firstSource shiftedRightBy (secondSource and 63)) and 1

@@ -1,0 +1,6 @@
+profile	extensions	note
+rv64i	I	base integer only
+rv64im	I M	base + multiply/divide
+rv64imac	I M A C	base + muldiv + atomics + compressed
+rv64gc	I M A F D C Zicsr Zifencei	general-purpose (G = IMAFD_Zicsr_Zifencei)
+rva23u64	I M A F D C V B Zicond Zicsr Zifencei Zba Zbb Zbs Zfa Zfhmin Zcb Zicbom Zicbop Zicboz Zawrs Zaamo Zalrsc Zacas Zvfhmin Zvbb	the RVA23 application profile (Tier A validates I/M/Zicond/atomics today)

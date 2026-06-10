@@ -13,3 +13,6 @@ system	I	ecall/ebreak/fence (fence is Zifencei-adjacent; base for our purposes)
 muldiv	M	integer multiply/divide
 cond	Zicond	integer conditional operations
 atomic	A	atomic memory operations (Zaamo/Zalrsc/Zacas)
+zba	Zba	address-generation shifts (Tier B)
+zbb	Zbb	basic bit manipulation (Tier B)
+zbs	Zbs	single-bit operations (Tier B)

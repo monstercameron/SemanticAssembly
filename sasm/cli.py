@@ -130,12 +130,17 @@ def main(argv=None) -> int:
                     print("exec: need a function name or --start", file=sys.stderr)
                     return 2
                 call_args = []
-                for a in args.args:
-                    if a.startswith("["):
-                        vals = [int(x) for x in a.strip("[]").split(",") if x]
-                        call_args.append(m.alloc_int64_array(vals))
-                    else:
-                        call_args.append(int(a))
+                try:
+                    for a in args.args:
+                        if a.startswith("["):
+                            vals = [int(x) for x in a.strip("[]").split(",") if x]
+                            call_args.append(m.alloc_int64_array(vals))
+                        else:
+                            call_args.append(int(a))
+                except ValueError:
+                    print(f"exec: arguments must be integers or [1,2,3] "
+                          f"arrays, got {args.args!r}", file=sys.stderr)
+                    return 2
                 result = m.call(args.function, call_args)
                 label = "result"
         except ExecError as e:

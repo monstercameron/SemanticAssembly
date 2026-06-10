@@ -46,6 +46,17 @@ def load_formats() -> dict[str, dict]:
     return {r["fmt"]: r for r in _rows("formats.tsv")}
 
 
+def load_extmap() -> dict[str, str]:
+    """op class -> the RISC-V extension it requires (E-EXT-UNAVAILABLE)."""
+    return {r["class"]: r["extension"] for r in _rows("extmap.tsv")}
+
+
+def load_profiles() -> dict[str, set]:
+    """target profile -> the set of extensions it includes."""
+    return {r["profile"]: set(r["extensions"].split())
+            for r in _rows("profiles.tsv")}
+
+
 def load_syscalls() -> dict[str, dict]:
     """syscall name -> row. A row whose `return` is '-' never returns (exit)."""
     return {r["name"]: r for r in _rows("syscalls.tsv")}

@@ -1,0 +1,5 @@
+{
+ "t1": "Grow the stack frame from 32 bytes to 48 bytes. The three saved registers must sit at the top of the new frame: the return address at offset 40, s0 at offset 32, s1 at offset 24. Nothing else about the function's behavior may change.",
+ "t2": "Swap the roles of registers s0 and s1 throughout the function body: wherever the body used s0 it must now use s1, and vice versa. The prologue and epilogue must still save and restore both registers, each to/from its existing stack slot. Behavior must be unchanged.",
+ "t3": "Stop using s1 to carry the first recursive call's result. Instead: immediately after the first call, store a0 to the stack at offset 0 from sp; immediately before the final add, load that saved value into t2; the final add must then use t2 instead of s1. Remove s1's save and restore (and any related declarations), keeping the frame size at 32 bytes. Behavior must be unchanged."
+}

@@ -315,24 +315,23 @@ research/          all the docs (every .md except this README)
 Working today: the **compiler** (RV64 "Tier A": RV64I + M + Zicond + scalar
 atomics) emits byte-identical, assembling, *executing* RISC-V across thirteen
 examples; the **validator** implements the entire enforced set of the DESIGN §14
-catalog — 26 codes, from `E-CFG-LAYOUT` to the every-surface set (`E-RESERVED`, `E-STACK-OP`/`E-STACK-BALANCE`, `W-LINT`) — with zero
+catalog — all 32 codes, nothing pending — with zero
 false positives on the examples; the **taint interpreter** (`sasm exec`) checks
 the semantic facts dynamically (the `R-*` runtime catalog, DESIGN §19.2); and
 the **mutation tier** fuzzes the verifier itself — 75 mutants, every
 behavior-changing one caught statically or dynamically, and its first run found
 and fixed a real hole (`E-SLOT-RANGE`). All proven on emulated RISC-V.
 
-Honestly not done yet: a 2026-06 edge-case audit specified five further
-diagnostic codes (TODOS A3); the gauntlet shakedown then landed the sharpest
-one — `E-CFG-LAYOUT` (block-layout adjacency, rows after a terminator,
-noreturn-syscall terminators) plus the `terminates` cross-check and the
-call-result binding rule — leaving duplicate facts, data contracts, ordinal
-sanity, and extension gating still ◌ (unenforced); until each lands, the facts
-it would guard must be read as intent (LANGUAGE §10.5). Also outstanding: the
-general `E-DERIVABLE` reachability linter; broader ISA coverage (Tiers B/V/P,
-planned via the official `riscv/riscv-opcodes` generator); and the runtime
-debugging design (DESIGN §18), which stays design-only until the premise
-benchmark runs. See [`TODOS.md`](research/TODOS.md).
+Honestly not done yet: the general `E-DERIVABLE` reachability oracle (its
+register-restatement and effect-restatement slices are live — the full
+"could a tool re-derive this fact?" analysis is the project's one open
+research item); the premise benchmark's FULL study (the D1 harness is live and a first
+Protocol-1 pilot has run — `benchmarks/runs/pilot/results.md` — but scale,
+n≥10, Protocol 2, and two task families remain); the real-binary debugging
+adapter (DESIGN §18, gated on D1's Protocol-2 result); and ISA breadth beyond Tier A (Tiers B/V/P via the official
+`riscv/riscv-opcodes` generator). Every diagnostic code in the catalog is
+enforced; every vocabulary predicate is checked, demoted-with-reason, or
+tier-scoped (LANGUAGE §10.5). See [`TODOS.md`](research/TODOS.md).
 
 ## Design docs
 

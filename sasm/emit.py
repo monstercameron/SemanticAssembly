@@ -47,7 +47,10 @@ def _insns_of(prog: Program, block: Entity) -> list[Entity]:
     otherwise source order."""
     insns = prog.members_of(block.name, "insn")
     if insns and all(i.scalar("ordinal") is not None for i in insns):
-        return sorted(insns, key=lambda i: int(i.scalar("ordinal")))
+        try:
+            return sorted(insns, key=lambda i: int(i.scalar("ordinal")))
+        except ValueError:
+            return insns        # §15.1: emit never crashes — E-ORDER-KEY at check
     return insns
 
 
@@ -62,7 +65,10 @@ def _resolve_field(prog: Program, insn: Entity, reg_asm: dict, field: str) -> st
             return slot.scalar("offset")
         return off
     if field == "target":
-        return _label_of(insn.scalar("target"))
+        t = insn.scalar("target")
+        # §15.1: emit never crashes — a missing field appears literally as
+        # None in the deterministic nonsense; build (which validates) refuses
+        return _label_of(t) if t is not None else "None"
     # immediate, symbol, anything else: verbatim
     return insn.scalar(field)
 
@@ -169,7 +175,9 @@ def emit(prog: Program) -> str:
             if (t := insn.scalar("target"))
         }
         for b in blocks:
-            if b.scalar("entry") != "yes" and b.name in targets:
+            # §15.1: a targeted block gets its .L label — INCLUDING the entry
+            # block (two labels, one address: the function symbol above it)
+            if b.name in targets:
                 lines.append(f"{_label_of(b.name)}:")
             for insn in _insns_of(prog, b):
                 lines.append(_emit_insn(prog, insn, ops, reg_asm))

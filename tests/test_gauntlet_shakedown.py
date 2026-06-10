@@ -68,12 +68,27 @@ def test_running_off_last_block_is_caught():
     assert any("runs off its last block" in m for m in msgs)
 
 
-def test_entry_block_target_is_rejected():
-    src = _read("examples/gauntlet_revlist/revlist.sasm") + (
-        "\nbadJump is insn\nbadJump in ReverseDone\nbadJump operation Jump\n"
-        "badJump target ReverseEntry\nReverseDone successor ReverseEntry\n")
-    msgs = _messages(src, "E-CFG-LAYOUT")
-    assert any("entry block" in m for m in msgs)
+def test_entry_block_target_is_legal_and_labeled():
+    """The §15.1 label rule landed: targeting the entry block is legal, and
+    the emitter defines `.L<entry>` right after the function symbol (two
+    labels, one address) — no dangling reference."""
+    from sasm.emit import emit
+    src = _read("examples/gauntlet_revlist/revlist.sasm").replace(
+        "returnReversedHead operation Return",
+        "loopForever is insn\nloopForever in ReverseDone\n"
+        "loopForever operation Jump\nloopForever target ReverseEntry\n"
+        "ReverseDone successor ReverseEntry\n"
+        "returnReversedHead operation Return")
+    # the Jump makes Return unreachable-after-terminator? No: Jump IS the
+    # terminator, Return follows it -> drop the Return instead
+    src = "\n".join(l for l in src.splitlines()
+                    if not l.startswith("returnReversedHead")) + "\n"
+    out = emit(parse(src))
+    assert ".Lreverseentry:" in out          # label defined
+    assert "j\t.Lreverseentry" in out        # and referenced
+    layout = [d for d in validate(parse(src))
+              if d.code == "E-CFG-LAYOUT" and "entry" in d.message]
+    assert not layout
 
 
 # ---------------------------------------------------------------- terminates cross-check

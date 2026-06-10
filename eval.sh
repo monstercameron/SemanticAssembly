@@ -24,7 +24,7 @@ python tests/refine_test.py || fail=1
 python tests/gen_test.py || fail=1
 # taint-interpreter + regression + mutation tiers (DESIGN §19)
 if python -c "import pytest" 2>/dev/null; then
-  python -m pytest tests/test_interp.py tests/test_gauntlet_shakedown.py tests/test_lint.py -q || fail=1
+  python -m pytest tests/ -q || fail=1
 fi
 python tests/test_mutation.py || fail=1
 

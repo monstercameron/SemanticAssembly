@@ -102,23 +102,21 @@ is always the machine-level opcode key.
 
 ## Grammar & namespace rules (locked)
 
-These pin the edge cases an agent edit can hit. Rules marked *(◌ A3)* are
-specified but their check is pending (TODOS A3) — until it lands, the listed
-behavior is what actually happens today.
+These pin the edge cases an agent edit can hit. Every rule below is
+ENFORCED (parse error or validator code; the 2026-06-10 completion pass landed
+the last of them).
 
 - **One namespace, file-global, across all entity kinds.** Handles live in a
   single namespace per translation unit: a `value` and a `block` cannot share a
   name. An entity has **exactly one `is` declaration**; a second `is` (same or
-  different type) is `E-DUP` *(◌ A3 — today it silently re-types the entity and
-  merges its facts)*.
+  different type) is a parse error (the E-DUP re-`is` clause).
 - **Single- vs multi-valued predicates.** Predicates carrying one authoritative
   slot — `is`, `operation`, the register fields, `immediate`, `offset`, `symbol`,
   `target`, `in` (membership), `entry`, `ordinal`, `visibility`, `binding`,
   `section`, `type`, `value` (data), `size`, `align`, `leaf`, `terminates` — may
-  appear **at most once per entity**; a duplicate is `E-DUP` *(◌ A3 — today the
-  **first** row silently wins, so an agent that "edits" by appending a new row
-  produces dead text: exactly the silent failure this format exists to prevent;
-  edit the existing row, never append a duplicate)*. Predicates that are
+  appear **at most once per entity**; a duplicate is `E-DUP` (the first row silently won before — an agent
+  "editing" by appending produced dead text, exactly the silent failure this
+  format exists to prevent; edit the existing row, never append). Predicates that are
   genuinely sets — `successor`, `predecessor`, `effect`, `reads`, `writes`,
   `requires`, `returns`, `liveOut`, `liveIn`, `saves`, `restores`, `preserves`,
   `usesCalleeSaved`, `in`/`out` (function), `arg`, `calls`, `targets`, `memory`,
@@ -126,23 +124,36 @@ behavior is what actually happens today.
 - **Strings are verbatim bytes.** Double quotes delimit; there is **no escape
   processing** (`"Hello\n"` keeps the literal backslash-n for the assembler).
   Consequences: a literal `"` is not representable in v0 (it would also corrupt
-  the emitted `.ascii "…"`), and an **unterminated string is `E-PARSE`**
-  *(◌ A3 — today it silently consumes to end of line)*.
+  the emitted `.ascii "…"`), and an **unterminated string is a parse error**.
 - **Reserved characters.** Outside strings, `#` starts a comment and `|`
   separates pipe-sugar clauses (§20); neither can appear in a bare token.
 - **Label namespaces are file-scoped in the assembler.** Block labels emit as
   `.L<lowercased handle>`, so block handles must be unique **file-wide and
-  case-insensitively** (`Done` vs `done` collide after lowering) — `E-DUP`
-  *(◌ A3)*. Function `symbol`s, `data` entity names, and `symbol` entities share
-  the assembler's global label namespace and must be pairwise distinct —
-  `E-DUP` *(◌ A3)*.
+  case-insensitively** (`Done` vs `done` collide after lowering) — `E-DUP`. Function `symbol`s, `data` entity names, and `symbol` entities
+  share the assembler's global label namespace and must be pairwise distinct —
+  `E-DUP`.
 - **`ordinal` is a decimal integer.** A non-integer ordinal or a duplicate
-  ordinal within a block is `E-ORDER-KEY` *(◌ A3 — today a non-integer ordinal
-  crashes emission with a Python traceback instead of a diagnostic)*.
+  ordinal within a block is `E-ORDER-KEY` (emit falls back to source order rather than crashing).
 - **`writes` to a discarded destination.** A `writes <value>` on an instruction
   whose only destination register is `zero` binds nothing (the write is
-  discarded by hardware); it is an error — the fact asserts a binding that
-  cannot exist *(◌ A3; today it is silently inert)*.
+  discarded by hardware); it is the error `E-VALUE-FLOW` — the fact asserts a
+  binding that cannot exist. **At most one `writes` per row** (a set would make
+  the static union and the runtime tag disagree).
+- **Subjects and predicates are bare identifiers** (`[A-Za-z_][A-Za-z0-9_]*`),
+  enforced at parse — a quoted token like `"a b"` must not become an entity
+  name the formatter later re-renders bare. `is` takes exactly one type.
+- **Every entity must carry a known `is <type>`** (`E-ENTITY`). An entity with
+  facts but no type — or a typo'd type — is skipped by every walk: its code
+  would vanish from check, emit, and exec with zero diagnostics.
+- **One integer grammar everywhere**: decimal with optional `-`, for
+  `immediate`, sizes, offsets, alignment. Hex and `1_000_000`-style literals
+  are rejected (`E-ISA-FIELD`) — they made check, emit, and exec disagree.
+- **Ownership is function-scoped**: an insn's `target`, a block's `successor`,
+  and an insn's slot-valued `offset` must belong to the same function
+  (`E-REF`) — a foreign slot is someone else's memory; a cross-function jump
+  bypasses every contract. A function has **exactly one `entry yes` block**
+  (`E-CFG-LAYOUT`), and a declared `program entry` must match a function
+  symbol (`E-REF`).
 
 ---
 
@@ -251,13 +262,13 @@ tier.
 | `effect` | S-check | `<effect> [<region>\|<name>]` | asserted effect (checked vs table); may carry a qualifier — `effect memory.read inputBuffer`, `effect syscall.write`, `effect call` |
 | `memory` | S-check | `region <region>` / `type <Type>` / `align <n>` / `volatile yes` | memory-access facts (region + type, not just the bare effect) |
 | `requires` | S-check | `<value> in <reg>` | the value must occupy that register **here** (cross-distance binding) |
-| `valueBindings` | S-check | `complete` | asserts the `reads`/`writes` on this insn list *every* symbolic binding (opt-in exhaustiveness; see below) |
+| `valueBindings` | S-check | `complete` | opt-in exhaustiveness: every source register holding a known value must appear in `reads` (checked, reads-side, by value-flow) |
 | `clobbers` | S-check | `callerSaved` \| `<reg>`... | call-site clobber set (default `callerSaved`, narrowable for a known callee) |
-| `liveIn` | S-check | `<reg>:<value>` | value live entering this instruction |
+| `liveIn` | S-check | `<reg>:<value>` | value live entering this instruction — checked against backward liveness (`E-LIVE-ASSERT`) |
 | `liveOut` | S-check | `<reg>:<value>` | value live leaving this instruction |
-| `liveAcross` | S-check | `call` \| `<block>` | value(s) that must survive this boundary |
-| `clobberRisk` | S-check | `<reg>:<value>` | a live value sitting in a register a call/op may clobber |
-| `kills` | S-check | `<reg>` | last use of whatever was in `<reg>` |
+| `liveAcross` | S-intent | `call` \| `<block>` | DEMOTED to intent (2026-06-10): the checkable form of this fact is `liveOut <reg>:<value>` — use that; this is a gloss |
+| `clobberRisk` | S-intent | `<reg>:<value>` | DEMOTED to intent (2026-06-10): `W-CLOBBER` computes the real thing; this is a gloss |
+| `kills` | S-check | `<reg>` | the register is DEAD after this row — checked against backward liveness (`E-LIVE-ASSERT`) |
 | `saves` | S-check | `<reg> <stackSlot>` | spills a register to a slot (prologue) |
 | `restores` | S-check | `<reg> <stackSlot>` | reloads a register from a slot (epilogue) |
 | `fallthrough` | S-check | `<block>` | the not-taken successor of a branch (the implicit path) |
@@ -302,10 +313,25 @@ the ABI argument registers). For a *known* callee you may narrow them with
 `arg <value> <reg>` and `clobbers <reg>...` at the call site; otherwise the
 conservative model stands, which can make `W-CLOBBER` over-fire (acceptable for
 v0). Call-site ABI facts are how you quiet it when the signature is known.
-*Enforcement honesty:* today the analyses honor `arg` (backward liveness uses
-declared args) but **not `clobbers`** — liveness and value-flow still model the
-full caller-saved set. Until that lands (TODOS A3), treat `clobbers` as intent:
-writing it will not change any diagnostic.
+*Now honored end-to-end:* liveness, backward liveness (`W-CLOBBER`), and
+value-flow all narrow a call's clobber set to declared `clobbers` registers
+(plus `returnAddress`); `clobbers callerSaved` is the explicit default, and
+clobber tokens are `E-ISA-REG`-validated.
+
+**Annotating a spill (the idiom the D1 pilot showed is non-obvious).** When a
+value moves to the stack instead of a callee-saved register, the `writes` goes
+on the row that PRODUCES the value (for a call result, the `Call` row — the
+call-result rule), **never on the store**: a store defines no register, so a
+`writes` there is the error "the binding cannot exist". The store and the
+reload then carry the value through memory tags automatically; put `reads
+<value>` on the reload and downstream consumers. Pattern:
+
+```
+producingCall writes spilledValue       # binds the result register (a0)
+spillStore    secondSource a0           # no writes here — memory carries it
+reloadValue   destination t2
+reloadValue   reads spilledValue        # confirmed via the memory tag
+```
 
 **Liveness / save-restore facts (`liveOut`, `liveAcross`, `clobberRisk`, `saves`,
 `restores`)** are the highest-value surfaced state: they are exactly what agents
@@ -389,7 +415,7 @@ noise on an adjacent producer→consumer pair.
 | `binding` | A | `global`\|`local`\|`weak` | symbol binding |
 | `purpose` | S-intent | `"..."` | |
 
-**The data contract (`E-DATA`, ◌ A3).** `section bss` requires `size` and
+**The data contract (`E-DATA` — enforced, 2026-06-10).** `section bss` requires `size` and
 forbids `value` (uninitialized memory is reserved with `.zero <size>`; today a
 sizeless bss entity silently emits `.zero None`). `section data`/`rodata`
 require `value`. For `type Bytes` the declared `size` must equal the literal's
@@ -425,6 +451,7 @@ aliasing, volatility, and the stack-is-internal rule explicit.
 | `kind` | S | `stack`\|`heap`\|`global`\|`readonly`\|`device` | nature of the region |
 | `aliases` | S | `<region>`\|`none` | may-alias relationship |
 | `volatile` | S | `yes`\|`no` | side-effecting access |
+| `concurrentWriters` | S-check | `yes`\|`no` | other agents (interrupt handlers, cores, DMA) may write this region: a plain load-modify-store to one address here is flagged `W-RMW-RACE` — use an atomic op, mask, or lock. Absent = the explicit single-writer assumption |
 | `purpose` | S | `"..."` | |
 
 ---
@@ -517,24 +544,36 @@ This table is the contract; the rule for readers and agents is:
 | `memory region` / effect-qualifier name resolution | `E-REF` |
 | `writes` on a row defining no register (incl. `zero` discard) | `E-VALUE-FLOW` |
 | self-moves, discarded results, decisionless branches | `W-LINT` |
+| non-atomic RMW on a `concurrentWriters yes` region | `W-RMW-RACE` |
+| entity typing (no untyped/unknown-typed entity may exist) | `E-ENTITY` |
+| the data contract (§6: bss/value/size/type/section/align, Bytes length after escapes) | `E-DATA` |
+| function-scoped ownership (targets, successors, slots), exactly-one-entry, `program entry` resolution | `E-REF` `E-CFG-LAYOUT` |
+| decimal-only integer grammar shared by check/emit/exec | `E-ISA-FIELD` |
 
-**Specified, not yet checked** (◌ — treat as intent until TODOS A3/A1 lands):
+**Also checked since the completion pass (2026-06-10)** — formerly the ◌ table,
+now empty of pending *codes*:
 
-| facts | intended guard |
-|-------|----------------|
-| successor exactness (stale edges); `predecessor` inverse | `E-CFG-EDGE` |
-| duplicate single-valued facts; re-`is`; label/symbol collisions | `E-DUP` |
-| `ordinal` integer-ness / duplicates | `E-ORDER-KEY` |
-| the data contract (§6) | `E-DATA` |
-| extension gating vs `program target` | `E-EXT-UNAVAILABLE` |
-| `clobbers` narrowing at call sites (analyses still assume full caller-saved) | liveness/value-flow |
-| `liveIn`, `liveAcross`, `clobberRisk`, `kills`, `valueBindings complete` | liveness/value-flow extensions |
-| `saves`/`restores` slot *pairing* and per-return-path completeness | `E-ABI-PRESERVE` refinement |
-| `syscall <name>` vs `syscalls.tsv` (number in `a7`, args live) — statically; the interpreter checks it dynamically | `E-EFFECT`/liveness |
-| `memory` `type`/`align`/`volatile` consistency (region *names* are now `E-REF`-checked; only `kind` semantics remain partial) | `E-TYPE` |
-| value `in`-scope, `definedBy`/`storedIn`/`restoredBy`, `signed`/`unit` consistency | value-flow extensions |
-| whole constructs: `parameter` (§13), indirect control flow (§14), atomics pairing (§15), CSR (§18), FP (§19), `vectorConfig` (§9) | Tier B/V/P validators |
-| the general derivable-fact linter | `E-DERIVABLE` (TODOS A1) |
+| facts | guarded by |
+|-------|-----------|
+| successor exactness (stale edges) and the `predecessor` inverse | `E-CFG-EDGE` |
+| duplicate single-valued facts; label/symbol collisions (re-`is` is a parse error) | `E-DUP` |
+| `ordinal` integer-ness / per-block uniqueness | `E-ORDER-KEY` |
+| extension gating vs `program target` (extmap.tsv × profiles.tsv) | `E-EXT-UNAVAILABLE` |
+| `clobbers` narrowing honored by liveness, `W-CLOBBER`, and value-flow | call-clobber model |
+| `liveIn` / `kills` vs backward liveness; `valueBindings complete` (reads-side) | `E-LIVE-ASSERT` / `E-VALUE-FLOW` |
+| `saves`/`restores` SAME-slot pairing + per-return-path restore proof | `E-ABI-PRESERVE` |
+| `syscall <name>` exists in syscalls.tsv (numbers checked at runtime, `R-EFFECT`) | `E-REF` |
+| value `in`-scope, `definedBy` (must match a `writes`), `storedIn` (must match the slot's `stores`), `restoredBy` | `E-REF` |
+| insn `effect` restating the op table with no qualifier (derivable copy) | `E-DERIVABLE` (slice) |
+
+**Honestly still open** (none of it an unchecked stored fact):
+
+| what | where tracked |
+|------|---------------|
+| the general derivable-fact reachability oracle (the slices above are live) | TODOS A1 — the one open research item |
+| `memory` `type`/`align`/`volatile` *semantic* consistency (names resolve; kinds checked at runtime) | `E-TYPE` extension, with Tier B |
+| whole constructs awaiting their tiers: `parameter` (§13), indirect control flow (§14), atomics pairing (§15), CSR (§18), FP (§19), `vectorConfig` (§9) | Tier B/V/P validators |
+| `liveAcross` / `clobberRisk` | DEMOTED to S-intent (2026-06-10) — their checkable forms are `liveOut` and `W-CLOBBER` |
 
 **Checked dynamically** (the §19.2 taint interpreter, `sasm exec` — trace-scoped
 per the runtime clause below; the coverage report names what a run did NOT
@@ -551,15 +590,16 @@ exercise):
 | sp alignment at calls | `R-ABI-ALIGN` |
 
 The "Everything else in S must be checkable" rule in the intro means checkable
-**in principle and in the design**; this table is where *in practice* is tracked.
-A predicate may not stay in the ◌ rows indefinitely — each must either gain its
-check or be demoted to S-intent / removed (that is a standing design debt, owned
-by TODOS A3).
+**in principle and in the design**; this table is where *in practice* is
+tracked. The check-or-demote discipline has now been applied to every predicate
+in the vocabulary: each is checked (statically, dynamically, or both), demoted
+to S-intent with its checkable replacement named, or scoped to a future tier
+with its construct. New predicates enter through the same gate.
 
 **Runtime clause (DESIGN §18):** a runtime contract check (`R-*`) is
 trace-scoped — it proves a fact held on one executed path under one input, and
-**never changes a fact's status in this table**. A ◌ fact stays intent after any
-number of clean runs; only a landed static check moves a row.
+**never changes a fact's status in this table**; only a landed static check
+moves a row.
 
 ---
 

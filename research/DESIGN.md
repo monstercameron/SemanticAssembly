@@ -399,7 +399,7 @@ flow, ABI implicit regs, pseudo expansions).
 | Tier | Extensions | Fidelity |
 |------|-----------|----------|
 | **A — full semantics** | RV64I, M, Zicond, scalar A (Zaamo/Zalrsc/Zacas) | def/use, effects, intra-proc liveness, ABI, stack, leaf, return-defined |
-| **B — structural + def/use + coarse effects** | F, D, C, B (Zba/Zbb/Zbs), Zfa, Zcb, Zfhmin, Zicbom/p/z, Zawrs, hints | emits + round-trips; effects classified coarsely (memory.read/write, float, fence); liveness over scalar regs; fp regs tracked structurally |
+| **B — structural + def/use + coarse effects** | F, D, C, B (Zba/Zbb/Zbs), Zfa, Zcb, Zfhmin, Zicbom/p/z, Zawrs, hints | emits + round-trips; effects classified coarsely (memory.read/write, float, fence); liveness over scalar regs; fp regs tracked structurally. **First slice LIVE (2026-06-10): 23 Zba/Zbb/Zbs ops** — and because the kernel is table-driven they get the full Tier-A stack (liveness, value-flow, gating, exec semantics), not just structure |
 | **V — special / frontier** | RVV 1.0 (V, Zvfhmin, Zvbb …) | coverage + structural now. Real validation needs modeling `vsetvli → vtype/vl/LMUL/SEW` + mask regs `v0`. Deferred, designed-for (§17). |
 | **P — opaque** | Zicsr, privileged, Sv*, H (S-profile) | structural only; treated as effectful black boxes |
 
@@ -798,37 +798,62 @@ the CFG construction is shared by both.
 ## 14. Diagnostic catalog (stable codes)
 
 Codes are part of the contract so agents can target them programmatically.
-Status: **✓** enforced today · **◌** specified, enforcement pending (TODOS A3) —
-a ◌ code is still the contract; until its check lands, the facts it would guard
-must be treated as intent (LANGUAGE, enforcement table).
+**Every code in this catalog is enforced** (the completion pass, 2026-06-10,
+landed the last three: E-DUP, E-ORDER-KEY, E-EXT-UNAVAILABLE). The ✓ markers
+remain as the historical record of the enforce-or-demote discipline; what is
+still honestly open lives in TODOS (the general E-DERIVABLE oracle, D1, §18's
+real-binary adapter, Tier B/V/P breadth) — none of it is an unchecked fact.
 
 ```
 ✓ E-PARSE-*     malformed fact / missing required field / unterminated string /
-                empty pipe clause   (unterminated-string case: ◌)
+                empty pipe clause; subjects and predicates must be bare
+                identifiers; `is` takes exactly one type and may not
+                re-declare; unterminated strings are rejected
 ✓ E-ISA-OPCODE  unknown opcode
 ✓ E-ISA-REG     not a valid register name
-✓ E-ISA-FIELD   opcode missing a required field (e.g. addi without imm)
+✓ E-ISA-FIELD   opcode missing a required field (e.g. addi without imm);
+                `immediate` must be a decimal integer — ONE grammar for
+                check/emit/exec (hex validated-clean but crashed exec;
+                `1_000_000` ran clean but emitted .s GAS rejects)
 ✓ E-REF         `in`/`target`/`offset`/value reference points at an undeclared
                 entity; `memory region` / effect-qualifier names must resolve
-                to declared memoryRegions
+                to declared memoryRegions; `target`/`successor`/slot `offset`
+                must belong to the SAME function (a foreign slot is someone
+                else's memory); referenced slots need an integer `offset`;
+                `program entry` must match a function symbol
+✓ E-ENTITY      an entity with fact rows but no `is <type>` — or an unknown
+                type — would be invisible to every of_type/members_of walk:
+                its code VANISHES from check, emit, and exec (the worst
+                finding of the 2026-06-10 edge audit)
 ✓ E-EFFECT      asserted effect set ≠ computed effect set (e.g. `effect none` + ecall)
 ✓ E-ABI-ALIGN   stack frame not 16-byte aligned
 ✓ E-ABI-PRESERVE callee-saved reg written but not saved/restored/declared
-                (set-wise; per-return-path completeness and slot pairing: ◌)
+                (set-wise), PLUS the per-path proof: every clobbered
+                callee-saved register (and returnAddress after any call) is
+                restored on EVERY path to a return, and each `saves r slot`
+                pairs with a `restores r slot` through the SAME slot
 ✓ E-LIVE-UNDEF  register used before defined on some path
 ✓ E-LIVE-RET    result register undefined at return
 ✓ E-LEAF        `leaf yes` but a call/ecall is present
 ✓ E-CFG-EDGE    branch target not a declared successor; declared `terminates`
-                ≠ the block's actual terminator (incl. noreturn-syscall kind)
-                (successor-exactness + predecessor inverse, §13: ◌)
+                ≠ the block's actual terminator (incl. noreturn-syscall kind);
+                successor EXACTNESS (a declared edge the terminator cannot
+                take is stale and silently widens every dataflow merge) and
+                the `predecessor` inverse when present (§13, both directions)
 ✓ E-VALUE-FLOW  `reads/writes <value>` not satisfied by reaching-defs
-                (may-form; must-form needs phi values, §11/§17)
+                (may-form; must-form needs phi values, §11/§17); at most one
+                `writes` per row (sets made static and runtime disagree);
+                `writes` on a row defining no register
 ✓ E-ORDER-MIXED a block mixes ordinaled and bare insns (§11.1)
-✓ E-LIVE-ASSERT a declared `liveOut` register is not actually live there (§13)
+✓ E-LIVE-ASSERT a declared `liveOut`/`liveIn` register is not actually live
+                there; a declared `kills` register is still live after (§13)
 ✓ W-UNREACHABLE a block has no path from the function entry
 ✓ E-TYPE        value Type unknown, or width inconsistent with its accesses
-✓ E-DERIVABLE   an S-fact restates A-facts + tables (register-name slice;
-                the general linter: ◌, TODOS A1)
+✓ E-DERIVABLE   an S-fact restates A-facts + tables — the register-name
+                slice, plus the effect-restatement slice (an insn `effect`
+                that equals the op table's with no qualifier and no memory
+                facts). The general reachability oracle remains TODOS A1 —
+                the one open research item
 ✓ W-CLOBBER     value live across a caller-saved boundary
 ✓ W-DEAD        value defined but never used
 ✓ E-SLOT-RANGE  stack slot offset outside the declared frame — an ERROR, not a
@@ -840,7 +865,9 @@ must be treated as intent (LANGUAGE, enforcement table).
                 terminator; function runs off its last block; targeted entry
                 block until §15.1's label rule lands (§11.1). A noreturn syscall
                 (`syscall` name with `return -` in syscalls.tsv) counts as a
-                terminator of kind `syscall`
+                terminator of kind `syscall`. A function must have exactly one
+                `entry yes` block (two suppress both labels; zero makes layout
+                an accident of declaration order)
 ✓ E-RESERVED    a row writes a register the platform ABI reserves (abi.tsv
                 `reserved`: gp/tp) — previously the only decorative table row
 ✓ E-STACK-OP    sp is an explicit surface: a stackPointer write must declare
@@ -853,19 +880,29 @@ must be treated as intent (LANGUAGE, enforcement table).
                 misaligned depth
 ✓ W-LINT        legal-but-never-intended shapes: self-moves, results discarded
                 into `zero`, branches whose target equals their fall-through
-◌ E-DUP         duplicate single-valued fact; entity re-`is`-declaration; block
-                handles colliding case-insensitively; function/data/symbol label
-                collisions (LANGUAGE, grammar rules)
-◌ E-ORDER-KEY   `ordinal` not a decimal integer, or duplicated within a block
-◌ E-DATA        data contract: bss requires `size` and forbids `value`;
-                data/rodata require `value`; Bytes `size` = literal byte length;
-                unknown data `type`
-◌ E-EXT-UNAVAILABLE  op's extension not in `program target` (LANGUAGE §17)
+✓ W-RMW-RACE    a plain load-modify-store to one address on a region declared
+                `concurrentWriters yes` — naming an RMW hazard does not make
+                it atomic (interrupts/other cores/DMA lose updates between
+                the load and the store); use an AMO, mask, or lock. A region
+                WITHOUT the fact carries the explicit single-writer
+                assumption (external-review finding, 2026-06-10)
+✓ E-DUP         duplicate single-valued fact (the append-style-edit trap:
+                only the first row is read); entity re-`is`-declaration (a
+                parse error); block handles colliding case-insensitively;
+                function/data/symbol label collisions (LANGUAGE, grammar rules)
+✓ E-ORDER-KEY   `ordinal` not a decimal integer, or duplicated within a block
+                (emit falls back to source order rather than crashing)
+✓ E-DATA        data contract: bss requires `size` and forbids `value`;
+                data/rodata require `value`; Bytes `size` = literal byte length
+                after escapes; unknown data `type`/`section`; `align` is a
+                power of two >= 1
+✓ E-EXT-UNAVAILABLE  op's extension (extmap.tsv) not in `program target`'s
+                profile (profiles.tsv); unknown target profiles error too
 ```
 
-Runtime contract codes (`R-*`) are a separate, design-only catalog in §18.3 —
-same diagnostic shape, trace-scoped semantics (§18.1), never substitutes for a
-◌ static check above.
+Runtime contract codes (`R-*`) are a separate catalog in §18.3 (LIVE
+in-process via the §19.2 interpreter) — same diagnostic shape, trace-scoped
+semantics (§18.1); a runtime check never substitutes for a static one above.
 
 Diagnostic shape (per §5.1 — diagnostics are the loop's feedback signal, so they
 must be a usable gradient): `severity code handle: message (fix-site)`. The
@@ -920,20 +957,17 @@ follow them:
 - **Whitespace:** lines joined by `\n`, exactly one trailing `\n`, no blank lines.
   Emit raw LF even on Windows (text-mode stdout would inject CRs).
 
-Pinned edge rules (added after the v0 snapshot; the first two are specified but
-not yet implemented — TODOS A3):
+Pinned edge rules (added after the v0 snapshot; all implemented):
 
-- **Targeted entry block:** if any instruction's `target` names the entry block,
-  the emitter must emit `.L<lowercased-entry-handle>:` immediately after the
-  function symbol label (two labels, one address). Today the emitter suppresses
-  it, so the emitted `.s` references an undefined label — the assembler rejects
-  it loudly (not silent corruption), and `E-CFG-LAYOUT` will reject it at
-  validation until the label rule lands.
-- **Data contract (`E-DATA`):** `bss` data requires `size` and forbids `value`
-  (today a sizeless bss entity emits `.zero None`); `data`/`rodata` require
-  `value`; for `Bytes` the declared `size` must equal the literal's byte length
-  (the emitter trusts `size` for `.size`); an unknown data `type` is an error
-  (today it silently falls back to `.dword`).
+- **Targeted entry block (IMPLEMENTED):** if any instruction's `target` names
+  the entry block, the emitter emits `.L<lowercased-entry-handle>:` immediately
+  after the function symbol label (two labels, one address). The construct is
+  legal; no validator rejection remains.
+- **Data contract (`E-DATA`, enforced):** `bss` data requires `size` and
+  forbids `value`; `data`/`rodata` require `value`; for `Bytes` the declared
+  `size` must equal the literal's byte length after escapes (the emitter
+  trusts `size` for `.size`); unknown data `type`/`section` and non-power-of-
+  two `align` are errors.
 - **Label namespace:** block labels are `.L<lowercased handle>` and the
   assembler's label namespace is file-scoped — hence the file-wide,
   case-insensitive handle-uniqueness rules in LANGUAGE (grammar rules), checked
@@ -969,6 +1003,15 @@ validate and emit without solving allocation first. This ordering is deliberate:
 **prove the fact model and validator are useful before automating their input.**
 
 ## 16.1 Falsifiability — the benchmark the thesis owes
+
+> **Status (2026-06-10):** the harness is LIVE (`benchmarks/d1.py` — arms
+> generated mechanically from one `.sasm`, one oracle for all arms) and the
+> first pilot ran: Protocol 1, fib, 3 edit tasks × 4 arms. Result: a/c/d 3/3,
+> b 2/3 — the one b failure was behaviorally-correct code with wrong spill
+> annotations, i.e. the validator holding arm b to a strictly higher bar
+> (facts AND code) at a function size where representation doesn't yet
+> matter. Full caveats: `benchmarks/runs/pilot/results.md`. The full study
+> (scale, n≥10, Protocol 2, families 1/3) remains open.
 
 §2.1 makes three claims — agents can *understand*, *edit*, and *manage/trace*
 `.sasm` better than `.s` — and each is an empirical hypothesis, not a proof. The
@@ -1097,6 +1140,11 @@ interpreter implements it (`sasm exec`) without any qemu/gdb plumbing. What
 remains gated below is the *real-binary* debugger (breakpoints on the emitted
 code under qemu); the design was adversarially reviewed by three independent
 critiques (2026-06-09; their blockers are folded in below).
+**Gate check (2026-06-10):** condition (ii) is met — the A3 statics all
+landed. Condition (i) is not: D1 has only a Protocol-1 pilot; the
+Protocol-2 result this section's value hangs on does not exist yet. The
+gate therefore HOLDS and this section stays design-only — completing it now
+would violate its own sequencing rule.
 **Sequencing gate:** §18 stays design-only until (i) D1's Protocol-2 result exists
 — if `.sasm` ≈ inline-comments there, a semantic debugger is more overbuild, not
 a rescue — and (ii) the A3 static codes whose contracts the R-checks would

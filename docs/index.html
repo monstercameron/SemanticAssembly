@@ -276,13 +276,13 @@ add2:
   <p>Syntax isn't the value — <em>checking</em> is. The validator recomputes the
   truth from authoritative facts (a CFG, block-layout rules, forward and backward
   liveness, a value-flow may-analysis) and judges every assertion against it.
-  26 enforced codes today (4 more specified, enforcement pending — the docs track
-  exactly which is which), each naming the entity handle at fault:</p>
+  all 32 catalog codes enforced — nothing pending; the check-or-demote ledger
+  is in the docs — each naming the entity handle at fault:</p>
   <div class="codes">
     <span>E-ISA-OPCODE</span><span>E-ISA-REG</span><span>E-ISA-FIELD</span><span>E-REF</span>
     <span>E-IMM-RANGE</span><span>E-ORDER-MIXED</span><span>E-ABI-ALIGN</span>
     <span>E-ABI-PRESERVE</span><span>E-LEAF</span><span>E-EFFECT</span><span>E-TYPE</span>
-    <span>E-SLOT-RANGE</span><span>E-RESERVED</span><span>E-STACK-OP</span><span>E-STACK-BALANCE</span><span>W-LINT</span><span>E-CFG-EDGE</span><span>E-CFG-LAYOUT</span><span>E-LIVE-UNDEF</span>
+    <span>E-SLOT-RANGE</span><span>E-ENTITY</span><span>E-DATA</span><span>E-DUP</span><span>E-ORDER-KEY</span><span>E-EXT-UNAVAILABLE</span><span>E-RESERVED</span><span>E-STACK-OP</span><span>E-STACK-BALANCE</span><span>W-LINT</span><span>E-CFG-EDGE</span><span>E-CFG-LAYOUT</span><span>E-LIVE-UNDEF</span>
     <span>E-LIVE-RET</span><span>E-LIVE-ASSERT</span><span>W-UNREACHABLE</span>
     <span>W-DEAD</span><span>W-CLOBBER</span><span>E-VALUE-FLOW</span><span>E-DERIVABLE</span>
   </div>
@@ -349,7 +349,7 @@ add2:
       <h3 class="status-ok">Working today</h3>
       <ul class="clean">
         <li>Compiler for RV64 "Tier A" (RV64I + M + Zicond + scalar atomics) — byte-identical, assembling, executing across thirteen examples.</li>
-        <li>Validator: 26 enforced codes, zero false positives — incl. <code>E-CFG-LAYOUT</code> (block layout is checked, not assumed) and the call-result binding rule, both landed by an e2e shakedown on the gauntlet examples.</li>
+        <li>Validator: all 32 catalog codes, zero false positives — incl. <code>E-CFG-LAYOUT</code> (block layout is checked, not assumed) and the call-result binding rule, both landed by an e2e shakedown on the gauntlet examples.</li>
         <li>Taint interpreter (<code>sasm exec</code>): the semantic facts checked <em>dynamically</em> (<code>R-*</code> catalog), with declared phis (<code>mergesFrom</code>) and a trace-coverage report.</li>
         <li>Mutation tier: 75 mutants, every behavior-changing one caught statically or dynamically; uncaught holes fail the build.</li>
         <li>Self-contained Docker eval environment (snapshots + validator + interpreter + mutation + qemu).</li>
@@ -359,7 +359,7 @@ add2:
     <div class="card">
       <h3 style="color:var(--warn)">Not done yet</h3>
       <ul class="clean">
-        <li>Four specified-but-unenforced codes (duplicate facts, data contracts, ordinal sanity, extension gating) — tracked in the enforcement-status table; their facts read as intent until each lands.</li>
+        <li>The general derivable-fact reachability oracle — its register and effect-restatement slices are live; the full analysis is the one open research item.</li>
         <li>General <code>E-DERIVABLE</code> reachability linter (research-grade).</li>
         <li>Broader ISA coverage (Tiers B/V/P) via the official <code>riscv-opcodes</code> generator.</li>
         <li>The premise benchmark (the experiment below) and the runtime-debugging design (DESIGN §18), which stays design-only until that benchmark runs.</li>

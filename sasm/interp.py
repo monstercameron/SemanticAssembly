@@ -142,7 +142,10 @@ class Machine:
             for b in bs:
                 ins = prog.members_of(b.name, "insn")
                 if ins and all(i.scalar("ordinal") is not None for i in ins):
-                    ins = sorted(ins, key=lambda i: int(i.scalar("ordinal")))
+                    try:
+                        ins = sorted(ins, key=lambda i: int(i.scalar("ordinal")))
+                    except ValueError:
+                        raise ExecError(f"{b.name}: non-integer ordinal") from None
                 self.insns[b.name] = ins
         self.symbols: dict[str, int] = {}
         self._place_data()
@@ -159,7 +162,12 @@ class Machine:
         in the emitted `.s`."""
         addr = DATA_BASE
         for d in self.prog.of_type("data"):
-            align = int(d.scalar("align", "1") or 1)
+            try:
+                align = int(d.scalar("align", "1") or 1)
+            except ValueError:
+                raise ExecError(f"{d.name}: non-integer align") from None
+            if align < 1:
+                raise ExecError(f"{d.name}: `align {align}` is not >= 1")
             addr = (addr + align - 1) // align * align
             self.symbols[d.name] = addr
             typ, val, size = d.scalar("type"), d.scalar("value"), d.scalar("size")
@@ -222,13 +230,31 @@ class Machine:
         return r
 
     def _get(self, reg: str) -> int:
-        return 0 if reg == "zero" else self.regs[reg]
+        if reg == "zero":
+            return 0
+        if reg not in self.regs:
+            raise ExecError(f"unknown register {reg!r}")
+        return self.regs[reg]
 
     def _set(self, reg: str, value: int, tag: str | None) -> None:
         if reg == "zero":
             return
+        if reg not in self.regs:
+            raise ExecError(f"unknown register {reg!r}")
         self.regs[reg] = value & MASK64
         self.tags[reg] = tag
+
+    @staticmethod
+    def _int(insn: Entity, field: str) -> int:
+        """one integer grammar, shared with the validator (decimal only)."""
+        s = insn.scalar(field)
+        try:
+            if s is None or "_" in s:
+                raise ValueError
+            return int(s, 10)
+        except ValueError:
+            raise ExecError(f"{insn.name}: `{field} {s}` is not a decimal "
+                            f"integer") from None
 
     def _writes_tag(self, insn: Entity) -> str | None:
         ws = [w[0] for w in insn.all("writes") if w]
@@ -293,6 +319,9 @@ class Machine:
             raise ExecError(f"no function named {name!r}")
         arg_regs = self.abi.get(fn.scalar("abi") or "linux.riscv64",
                                 {}).get("argInteger", ["a0"])
+        if len(args) > len(arg_regs):
+            raise ExecError(f"{name}: {len(args)} arguments but the ABI has "
+                            f"only {len(arg_regs)} integer argument registers")
         for i, a in enumerate(args):
             self._set(arg_regs[i], a & MASK64, None)
         # tag the declared parameters so reads can confirm from row one
@@ -308,12 +337,21 @@ class Machine:
         """Run the program entry (_start style); returns the exit code."""
         progent = next(iter(self.prog.of_type("program")), None)
         sym = progent.scalar("entry") if progent else None
-        fn = self.fn_by_symbol.get(sym or "_start")
-        if fn is None:  # fall back: the only function
-            fns = self.prog.of_type("function")
-            if len(fns) != 1:
-                raise ExecError("no program entry and multiple functions")
-            fn = fns[0]
+        if sym is not None:
+            fn = self.fn_by_symbol.get(sym)
+            if fn is None:
+                # never silently fall back past a DECLARED entry — a stored
+                # fact consumed by nothing is the failure mode this project
+                # exists to kill (2026-06 edge audit)
+                raise ExecError(f"`prog entry {sym}` matches no function "
+                                f"symbol in this file")
+        else:
+            fn = self.fn_by_symbol.get("_start")
+            if fn is None:  # fall back: the only function
+                fns = self.prog.of_type("function")
+                if len(fns) != 1:
+                    raise ExecError("no program entry and multiple functions")
+                fn = fns[0]
         tok = self._mint_token(None)
         self.regs["returnAddress"] = tok
         self._run(fn, tok, max_steps)
@@ -428,18 +466,23 @@ class Machine:
         def offset_of():
             off = insn.scalar("offset")
             slot = self.prog.get(off) if off else None
-            if slot is not None and slot.type == "stackSlot":
-                return int(slot.scalar("offset"))
-            return int(off)
+            try:
+                if slot is not None and slot.type == "stackSlot":
+                    return int(slot.scalar("offset"))
+                return int(off)
+            except (TypeError, ValueError):
+                raise ExecError(f"{insn.name}: offset {off!r} does not "
+                                f"resolve to an integer") from None
 
         cls = spec["class"]
 
         # ---------- arithmetic / logic / shifts / compares / muldiv ----------
-        if cls in ("arith", "logic", "shift", "compare", "muldiv", "cond") \
-                or op in ("Move",):
+        if cls in ("arith", "logic", "shift", "compare", "muldiv", "cond",
+                   "zba", "zbb", "zbs") or op in ("Move",):
             a = src("firstSource") if spec["uses"] and "firstSource" in spec["uses"] else 0
             b = src("secondSource") if "secondSource" in spec["uses"] else None
-            imm = int(insn.scalar("immediate")) if insn.scalar("immediate") is not None else None
+            imm = self._int(insn, "immediate") \
+                if insn.scalar("immediate") is not None else None
             self._check_reads(insn, [insn.scalar(f) for f in
                                      ("firstSource", "secondSource") if insn.scalar(f)])
             r = self._alu(op, insn, a, b, imm)
@@ -462,7 +505,7 @@ class Machine:
         # ---------- constants ----------
         if op == "LoadImmediate":
             self._set(self._reg(insn, "destination"),
-                      int(insn.scalar("immediate")) & MASK64, wtag)
+                      self._int(insn, "immediate") & MASK64, wtag)
             return None
         if op == "LoadAddress":
             sym = insn.scalar("symbol")
@@ -648,6 +691,37 @@ class Machine:
         if op == "Move": return a
         if op == "ConditionalZeroIfZero": return 0 if b == 0 else a
         if op == "ConditionalZeroIfNonzero": return 0 if b != 0 else a
+        # ---- Tier B scalar bitmanip (Zba/Zbb/Zbs) ----
+        if op == "AddShiftedBy1": return ((a << 1) + b) & MASK64
+        if op == "AddShiftedBy2": return ((a << 2) + b) & MASK64
+        if op == "AddShiftedBy3": return ((a << 3) + b) & MASK64
+        if op == "AndNot": return a & ~b & MASK64
+        if op == "OrNot": return (a | (~b & MASK64)) & MASK64
+        if op == "ExclusiveNor": return ~(a ^ b) & MASK64
+        if op == "CountLeadingZeros": return 64 - a.bit_length()
+        if op == "CountTrailingZeros":
+            return 64 if a == 0 else (a & -a).bit_length() - 1
+        if op == "CountSetBits": return a.bit_count()
+        if op == "Minimum": return (sa if sa < sb else sb) & MASK64
+        if op == "Maximum": return (sa if sa > sb else sb) & MASK64
+        if op == "MinimumUnsigned": return min(a, b)
+        if op == "MaximumUnsigned": return max(a, b)
+        if op == "SignExtendByte": return _signed(a, 8) & MASK64
+        if op == "SignExtendHalfword": return _signed(a, 16) & MASK64
+        if op == "ZeroExtendHalfword": return a & 0xFFFF
+        if op == "RotateLeft":
+            k = b & 63
+            return ((a << k) | (a >> (64 - k))) & MASK64 if k else a
+        if op == "RotateRight":
+            k = b & 63
+            return ((a >> k) | (a << (64 - k))) & MASK64 if k else a
+        if op == "RotateRightImmediate":
+            k = imm & 63
+            return ((a >> k) | (a << (64 - k))) & MASK64 if k else a
+        if op == "ReverseBytes": return int.from_bytes(a.to_bytes(8, "little"), "big")
+        if op == "SetBit": return (a | (1 << (b & 63))) & MASK64
+        if op == "ClearBit": return a & ~(1 << (b & 63)) & MASK64
+        if op == "ExtractBit": return (a >> (b & 63)) & 1
         raise ExecError(f"{insn.name}: ALU op {op!r} unimplemented")
 
     def _branch_taken(self, op, insn) -> bool:
