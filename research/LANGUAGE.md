@@ -188,6 +188,15 @@ Makes the ISA/target assumptions explicit instead of living in `-march` flags.
 | `unwind` | S | `yes`\|`no` | request `.cfi_*` emission |
 | `purpose` | S-intent | `"..."` | |
 
+**The stack pointer is an explicit surface (locked).** Any row that writes
+`stackPointer` must carry `effect stack.allocate` or `stack.free`
+(`E-STACK-OP`) and must be a constant `AddImmediate` (`E-STACK-BALANCE` —
+dynamic allocation is out of scope in v0). A forward pass then proves, with no
+further declarations: balanced frames on every return path, consistent depth at
+every merge, 16-byte alignment at every call, and that the deepest adjustment
+equals the declared `stack bytes` — and a function that moves sp without
+declaring `stack bytes` at all is an error, so the frame can never be implicit.
+
 **`preserves` is per-touched-register, not exhaustive.** A function need only name
 the callee-saved registers it actually *uses* (`usesCalleeSaved`) and *preserves* —
 never the whole `s0–s11` file. The validator's contract is purely about what the
@@ -336,6 +345,7 @@ to them by name.
 | `definedBy` | S-check | `<insn>` | where this value is produced |
 | `storedIn` | S-check | `<stackSlot>` | the slot it is spilled to (when it crosses a call) |
 | `restoredBy` | S-check | `<insn>` | where it is reloaded |
+| `mergesFrom` | S-check | `<value>` | **declared phi**: on some path this value legitimately *is* the named value (may repeat). `result mergesFrom number` is fib's base case. Accepted by the static union AND the runtime taint check (DESIGN §19.2); any *undeclared* tag still errors. Referenced value must exist (`E-REF`) |
 | `meaning` | S-intent | `"..."` | |
 
 **Width & signedness live on the `value`, not the instruction.** `lw` vs `lwu`,
@@ -491,7 +501,7 @@ This table is the contract; the rule for readers and agents is:
 | register names in `reads`/`writes`/`returns`/`requires` | `E-DERIVABLE` |
 | `reads`/`writes`/`returns`/`requires` bindings | `E-VALUE-FLOW` (may-form, DESIGN §11) |
 | function `effect` (with the internal-effect rule), `leaf` | `E-EFFECT` `E-LEAF` |
-| `stack bytes` 16-alignment; slot offset vs frame | `E-ABI-ALIGN` `W-SLOT` (start-only) |
+| `stack bytes` 16-alignment; slot offset vs frame | `E-ABI-ALIGN` `E-SLOT-RANGE` (start-only) |
 | callee-saved reuse vs `saves`/`restores`/`preserves` (set-wise) | `E-ABI-PRESERVE` |
 | use-before-def, return definedness, `liveOut` | `E-LIVE-UNDEF` `E-LIVE-RET` `E-LIVE-ASSERT` |
 | clobber/dead warnings | `W-CLOBBER` `W-DEAD` |
@@ -502,6 +512,11 @@ This table is the contract; the rule for readers and agents is:
 | `writes` width vs op width | `E-TYPE` |
 | decimal `immediate` ranges (incl. `shamt6`) | `E-IMM-RANGE` |
 | ordinal mixing within a block | `E-ORDER-MIXED` |
+| writes to ABI-reserved registers (gp/tp) | `E-RESERVED` |
+| sp writes declare `stack.allocate`/`free`; constant-only adjustments; per-path balance, merge consistency, call alignment, allocation = `stack bytes` | `E-STACK-OP` `E-STACK-BALANCE` `E-ABI-ALIGN` |
+| `memory region` / effect-qualifier name resolution | `E-REF` |
+| `writes` on a row defining no register (incl. `zero` discard) | `E-VALUE-FLOW` |
+| self-moves, discarded results, decisionless branches | `W-LINT` |
 
 **Specified, not yet checked** (◌ — treat as intent until TODOS A3/A1 lands):
 
@@ -515,13 +530,25 @@ This table is the contract; the rule for readers and agents is:
 | `clobbers` narrowing at call sites (analyses still assume full caller-saved) | liveness/value-flow |
 | `liveIn`, `liveAcross`, `clobberRisk`, `kills`, `valueBindings complete` | liveness/value-flow extensions |
 | `saves`/`restores` slot *pairing* and per-return-path completeness | `E-ABI-PRESERVE` refinement |
-| `stack bytes` vs the actual prologue `addi sp, sp, -N` | `E-ABI-ALIGN` refinement |
-| `syscall <name>` vs `syscalls.tsv` (number in `a7`, args live) | `E-EFFECT`/liveness |
-| `memory region`/`type`/`align`/`volatile` resolution (region names are unvalidated; only `kind stack` feeds the internal-effect rule) | `E-REF`/`E-TYPE` |
-| effect *region qualifiers* (`effect memory.write <region>`) | `E-REF` |
+| `syscall <name>` vs `syscalls.tsv` (number in `a7`, args live) — statically; the interpreter checks it dynamically | `E-EFFECT`/liveness |
+| `memory` `type`/`align`/`volatile` consistency (region *names* are now `E-REF`-checked; only `kind` semantics remain partial) | `E-TYPE` |
 | value `in`-scope, `definedBy`/`storedIn`/`restoredBy`, `signed`/`unit` consistency | value-flow extensions |
 | whole constructs: `parameter` (§13), indirect control flow (§14), atomics pairing (§15), CSR (§18), FP (§19), `vectorConfig` (§9) | Tier B/V/P validators |
 | the general derivable-fact linter | `E-DERIVABLE` (TODOS A1) |
+
+**Checked dynamically** (the §19.2 taint interpreter, `sasm exec` — trace-scoped
+per the runtime clause below; the coverage report names what a run did NOT
+exercise):
+
+| facts | runtime guard |
+|-------|---------------|
+| `reads`/`writes`/`returns` bindings, incl. declared `mergesFrom` phis | `R-VALUE-FLOW` (must-semantics on the executed path — closes the static may-gap there) |
+| `liveOut <reg>:<value>` across calls | `R-LIVE-OUT` |
+| function `effect` set (observed ⊆ declared, internal-effect rule applied) | `R-EFFECT` |
+| `preserves` + frame freed + return-address integrity (single-use tokens) | `R-ABI-PRESERVE` |
+| `stack bytes` vs the actual prologue adjustment | `R-ABI-FRAME` |
+| executed control transfers vs declared edges | `R-CFG-EDGE` |
+| sp alignment at calls | `R-ABI-ALIGN` |
 
 The "Everything else in S must be checkable" rule in the intro means checkable
 **in principle and in the design**; this table is where *in practice* is tracked.
@@ -728,5 +755,7 @@ With §13–§20, the language has an explicit construct for every category in
 `TODOS.md` except the genuinely dynamic Tier V/P semantics (full `vtype`/`vl`
 dataflow, interrupt state), which are *named* but not yet *reasoned about*. What
 remains is no longer "make it expressible" — it is "write the validator that
-turns each fact into a check" (DESIGN §14) and build the runtime (`isa.py`,
-`emit.py`). Expressiveness is essentially complete; enforcement is not.
+turns each fact into a check" (DESIGN §14; §10.5 tracks exactly which checks
+exist today). The toolchain (`isa.py`, `emit.py`, `validate.py`) is built and
+proven on emulated RISC-V. Expressiveness is essentially complete; enforcement
+is the remaining debt, and it is tracked, not assumed.

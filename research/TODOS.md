@@ -13,11 +13,14 @@ Status reflects **expressibility**: `[x]` a construct/table exists · `[~]`
 partial or design-only · `[ ]` no construct yet.
 
 > **Status (current):** the toolchain runs. `parser.py` + `isa.py` + `emit.py`
-> (the projection π) + `validate.py` (the full §14 catalog, 19 codes) + `cli.py`
-> are implemented and tested; 5 examples emit byte-identical `.s` and execute
-> correctly under qemu. What remains is breadth (the rest of RVA23), one hard
-> check (general `E-DERIVABLE`), some convenience features, and the empirical
-> study. Those are enumerated in **"Not yet implemented"** immediately below.
+> (the projection π) + `validate.py` (the §14 catalog's enforced set, 26 codes
+> incl. `E-CFG-LAYOUT` and the call-result rule) + `cli.py` are implemented and
+> tested; **thirteen** examples (incl. the gauntlet set: ackermann / quicksort /
+> revlist) emit byte-identical `.s` and execute correctly under qemu. What
+> remains is breadth (the rest of RVA23), one hard check (general
+> `E-DERIVABLE`), the remaining A3 edge codes, the empirical study (D1), and
+> the gated runtime-debug design (§18 / section G). Enumerated in **"Not yet
+> implemented"** immediately below.
 
 Vocabulary lives in `LANGUAGE.md`; ops in `OPCODES.md`/`optable.tsv`; data in
 `regs.tsv`, `abi.tsv`, `formats.tsv`, `extmap.tsv`, `syscalls.tsv`, `csr.tsv`.
@@ -99,11 +102,18 @@ Priority order = blast radius.
 - [ ] **`saves`/`restores` slot pairing + per-return-path completeness** —
   set-wise check passes a function that restores on only one of two return
   paths.
-- [ ] **`stack bytes` vs actual prologue** — `stack bytes 32` with
-  `addi sp, sp, -16` passes today (DESIGN §11 promises the cross-check).
-- [ ] **Region/effect-qualifier `E-REF`** — `memory region <typo>` and
-  `effect memory.write <typo>` are unvalidated names today.
-- [ ] **`writes` with `zero` destination** — silently inert binding today.
+- [x] **`stack bytes` vs actual prologue** — ✅ DONE (lint audit, 2026-06-09):
+  `E-STACK-BALANCE` proves per-path frame balance, merge consistency, call
+  alignment, and allocation == declared bytes; `E-STACK-OP` makes every sp
+  write a declared surface (`effect stack.allocate`/`free` required, constant
+  adjustments only). Regressions: `tests/test_lint.py`.
+- [x] **Region/effect-qualifier `E-REF`** — ✅ DONE: `memory region <name>` and
+  `effect memory.*/device.* <name>` must resolve to declared memoryRegions —
+  landing it caught a stale region fact in hello_world.
+- [x] **`writes` with `zero` destination** — ✅ DONE: `E-VALUE-FLOW` error
+  ("the binding cannot exist"); `W-LINT` additionally flags any discarded
+  result. Also new: `E-RESERVED` (gp/tp writes — abi.tsv's `reserved` row was
+  the toolchain's only decorative table data).
 - [ ] Remaining §10.5 rows (`liveIn`/`liveAcross`/`clobberRisk`/`kills`/
   `valueBindings complete`, `syscall` table check, `E-EXT-UNAVAILABLE`) — each
   gains its check **or is demoted to S-intent / removed**; none may stay
@@ -181,7 +191,7 @@ Priority order = blast radius.
   they contain whitespace).
 - **Where:** `sasm/format.py` + CLI `sasm fmt [-i]`. DESIGN §11.1.
 - **Done:** `tests/fmt_test.py` proves idempotence and `emit∘parse∘fmt == emit∘parse`
-  on all 5 examples; wired into `eval.sh`.
+  on all examples; wired into `eval.sh`.
 
 ### C4. Data-section completeness 🟡 — ✅ DONE
 - **What:** all int widths (`.byte`/`.half`/`.word`/`.dword`), `.bss`/`.zero`
@@ -253,11 +263,39 @@ Priority order = blast radius.
   data section (`data_demo`), cross-TU linking (`linked`); fp coverage waits on
   Tier B (B2).
 
-## G. Runtime debug API — DESIGN §18 🔴 (design-only; gated)
+## H. Verification strategy — DESIGN §19 🟢 core landed, growing
 
-- **What:** the dynamic half of the trust invariant: handle→address sidecar map,
-  activation-aware qemu-gdbstub adapter, trace-scoped runtime contract checks
-  (`R-*`), batch-first agent API (`sasm run --break --assert-contracts`).
+- [x] **Taint-tracking interpreter** (`sasm/interp.py`, `sasm exec`) — executes
+  the fact rows on a shadow-tagged RV64IM machine; the R-contract catalog
+  (§18.3) runs in-process: `R-VALUE-FLOW`/`R-LIVE-OUT`/`R-ABI-PRESERVE`/
+  `R-ABI-FRAME`/`R-ABI-ALIGN`/`R-EFFECT`/`R-CFG-EDGE`, single-use return
+  tokens, trace-scope coverage report. All 10 runnable examples execute
+  correctly in it; the §11 path-dependent clobber is caught concretely.
+  Regressions: `tests/test_interp.py`.
+- [x] **`mergesFrom` — the minimal declared phi** (LANGUAGE §4) — forced by the
+  interpreter's first run (fib's base path flagged F(11) times); accepted by
+  static union + runtime taint; `E-REF`-validated.
+- [x] **Mutation tier** (`tests/test_mutation.py`) — 75 mutants over
+  fib/sum_array/ackermann: every behavior-changing mutant caught statically or
+  dynamically, equivalents proven by byte-identity, holes fail the build
+  unless allow-listed with a reason. **First finding:** out-of-frame stack
+  slots only warned while corrupting the caller's frame → upgraded to
+  `E-SLOT-RANGE` (error).
+- [ ] **`check --coverage` / `--strict`** — per-fact verified/unverified
+  labeling as CLI output; strict = unverifiable facts are errors.
+- [ ] **Differential exec-vs-qemu** — same vectors, compare final state; a
+  divergence is a table/emitter/interpreter bug (verifies the verifier's
+  tables).
+- [ ] **More mutation operators** (block reorder via text move, fact staleness
+  injection, slot-collision) + run over the full example corpus in CI.
+
+## G. Runtime debug API — DESIGN §18 🔴 (real-binary half; gated)
+
+- **What:** the *real-binary* half: handle→address sidecar map and an
+  activation-aware qemu-gdbstub adapter (`sasm run --break …`). The R-contract
+  checks themselves are LIVE in-process via the §19.2 interpreter (section H);
+  this section is only about running them against the emitted binary under
+  qemu.
 - **Gate (DESIGN §18 header):** do not build until (i) D1's Protocol-2 result
   exists and (ii) the A3 statics the R-checks would backstop have landed.
   Design was adversarially reviewed by three independent critiques (2026-06-09);
@@ -413,7 +451,12 @@ Priority order = blast radius.
 - [ ] Generator from `riscv/riscv-opcodes` → Tier B/V/P table rows (§7.2) → **details: B1**
 - [x] **`isa.py`** — loads optable/regs TSVs (extend to abi/formats/etc. for the validator)
 - [x] **`emit.py`** — the projection `π`; **byte-identical** on all three examples (DESIGN §15.1); CLI `sasm emit|build|facts`
-- [x] **`validate.py`** — **entire §14 catalog wired (19 codes)**: `E-ISA-OPCODE/REG/FIELD`, `E-REF`, `E-ABI-ALIGN`, `E-ABI-PRESERVE`, `E-LEAF`, `E-EFFECT` (internal-effect rule), `E-CFG-EDGE`, `E-ORDER-MIXED`, `E-IMM-RANGE`, `E-TYPE`, `W-SLOT`, forward liveness `E-LIVE-UNDEF`/`E-LIVE-RET`, backward liveness `W-DEAD`/`W-CLOBBER`, value-flow `E-VALUE-FLOW` (may-analysis over named values — handles fib's phi merge, catches the naive value-clobber), `E-DERIVABLE` (register-restatement case). CLI `sasm check`; `build` refuses on errors; all examples clean, every code's mutation caught. Remaining: full reachability `E-DERIVABLE` (beyond register-restatement) is still research-grade; `E-PARSE-*` lives in the parser.
+- [x] **`validate.py`** — **§14 enforced set wired (26 codes)**, incl.
+  `E-CFG-LAYOUT` (layout/terminator clauses, noreturn-syscall terminators), the
+  `terminates` cross-check, the call-result `writes` binding (gauntlet
+  shakedown, 2026-06-09), and the every-surface set (`E-RESERVED`,
+  `E-STACK-OP`/`E-STACK-BALANCE`, `W-LINT`, region-name `E-REF`; lint audit
+  2026-06-09, `tests/test_lint.py`). Original catalog: `E-ISA-OPCODE/REG/FIELD`, `E-REF`, `E-ABI-ALIGN`, `E-ABI-PRESERVE`, `E-LEAF`, `E-EFFECT` (internal-effect rule), `E-CFG-EDGE`, `E-ORDER-MIXED`, `E-IMM-RANGE`, `E-TYPE`, `E-SLOT-RANGE` (upgraded from W-SLOT by the §19 mutation tier), forward liveness `E-LIVE-UNDEF`/`E-LIVE-RET`, backward liveness `W-DEAD`/`W-CLOBBER`, value-flow `E-VALUE-FLOW` (may-analysis over named values — handles fib's phi merge, catches the naive value-clobber), `E-DERIVABLE` (register-restatement case). CLI `sasm check`; `build` refuses on errors; all examples clean, every code's mutation caught. Remaining: full reachability `E-DERIVABLE` (beyond register-restatement) is still research-grade; `E-PARSE-*` lives in the parser.
 - [~] Diagnostics carry **stable code + entity handle + fix site** (DESIGN §5.1/§14) — code+handle done; fix-site uniformity pending (see A2).
 - [x] **Value-flow pass** (`E-VALUE-FLOW`) — may-analysis (reaching-defs over named values), handles fib's phi merge, catches the value-clobber.
 - [~] **Derivable-fact linter** (`E-DERIVABLE`) — register-restatement case done; **general reachability linter pending (see A1, ⚠ load-bearing).**

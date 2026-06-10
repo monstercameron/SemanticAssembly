@@ -420,7 +420,8 @@ That proves model → validate → emit before we lean on the generator for brea
 - **ABI:** Linux riscv64 LP64D (+ raw syscall flavor for `_start`)
 - **Pipeline:** `.sasm` → parse → validate → emit `.s` (no linker magic yet)
 - **Run target (later):** `clang --target=riscv64 -march=rva23u64` to assemble,
-  `qemu-riscv64` to execute. Neither installed yet → v0 verifies `.s` by snapshot.
+  `qemu-riscv64` to execute. Both now run in the `testing/` Docker image — every
+  example is snapshot-verified, assembled, and executed (see `testing.md`).
 
 Out of scope even at RVA23 ambition: interprocedural dataflow, multiple
 translation units, relocations/linker scripts, Layer-1 lowering, full RVV
@@ -456,7 +457,7 @@ semanticassembly/
     OPCODES.md         ← rendered semantic op reference
     TODOS.md           ← implicit-state → explicit-fact backlog
     examples.md        ← guide to the example triptychs
-    testing.md         ← the two-tier test harness
+    testing.md         ← the three-tier test harness
     docs.md            ← how to view / publish the webpage
   sasm/                ← the toolchain (pure Python, no deps)
     model.py           ← Entity / Program (fact store)
@@ -472,6 +473,10 @@ semanticassembly/
     simple_add2/       ← leaf function (c / sasm / s)
     challenging_sum_array/ ← loop + memory + CFG
     brainworms_fib/    ← recursion, stack frame, callee-saved
+    gauntlet_ackermann/    ← nested recursion, call-result binding
+    gauntlet_quicksort/    ← two recursions + mutating partition loop
+    gauntlet_revlist/  ← pointer rotation, two functions per TU
+    sum_of_squares/  data_demo/  linked/   ← _start programs, data, cross-TU
     hello_world/       ← standalone _start + syscalls
   tests/               ← snapshot (compiler) + check (validator)
   testing/             ← qemu behavioral harness
@@ -581,10 +586,12 @@ weaker than the §11.2 contract as stated.** Union-merge means the check fails o
 when the asserted value is impossible on *every* incoming path; a
 **path-dependent clobber** — value intact on one path, destroyed on another —
 passes silently, and an empty (unknown) set is never flagged. §11.2 specifies the
-ideal must-semantics ("on every incoming path"); closing the gap requires
-first-class phi *values*, so legitimate merges can be blessed explicitly and
-everything else checked strictly. That remains the §17 design item — until it
-lands, E-VALUE-FLOW catches must-clobbers, not may-clobbers, and the docs say so
+ideal must-semantics ("on every incoming path"); closing the gap statically
+requires first-class phi *values*. The minimal phi — a declared **`mergesFrom`**
+(LANGUAGE §4) — has landed, and the **runtime taint check (§19.2) enforces the
+must-semantics on every executed path**, catching exactly the path-dependent
+clobbers this paragraph concedes (verified: fib's naive variant). Statically,
+E-VALUE-FLOW still catches must-clobbers, not may-clobbers, and the docs say so
 rather than overclaiming.
 
 ## 11.1 Ordering: positional, canonical, and formatter-protected
@@ -802,7 +809,8 @@ must be treated as intent (LANGUAGE, enforcement table).
 ✓ E-ISA-REG     not a valid register name
 ✓ E-ISA-FIELD   opcode missing a required field (e.g. addi without imm)
 ✓ E-REF         `in`/`target`/`offset`/value reference points at an undeclared
-                entity   (effect/memory *region* args: ◌)
+                entity; `memory region` / effect-qualifier names must resolve
+                to declared memoryRegions
 ✓ E-EFFECT      asserted effect set ≠ computed effect set (e.g. `effect none` + ecall)
 ✓ E-ABI-ALIGN   stack frame not 16-byte aligned
 ✓ E-ABI-PRESERVE callee-saved reg written but not saved/restored/declared
@@ -823,13 +831,28 @@ must be treated as intent (LANGUAGE, enforcement table).
                 the general linter: ◌, TODOS A1)
 ✓ W-CLOBBER     value live across a caller-saved boundary
 ✓ W-DEAD        value defined but never used
-✓ W-SLOT        stack slot offset outside declared frame
+✓ E-SLOT-RANGE  stack slot offset outside the declared frame — an ERROR, not a
+                warning: the access lands in the caller's frame and can pass
+                behavioral tests when the victim slot is unused (upgraded from
+                W-SLOT by the mutation tier's first finding, §19)
                 (slot *extent* and pairwise overlap: ◌)
 ✓ E-CFG-LAYOUT  fall-through edge not physically adjacent; instruction after the
                 terminator; function runs off its last block; targeted entry
                 block until §15.1's label rule lands (§11.1). A noreturn syscall
                 (`syscall` name with `return -` in syscalls.tsv) counts as a
                 terminator of kind `syscall`
+✓ E-RESERVED    a row writes a register the platform ABI reserves (abi.tsv
+                `reserved`: gp/tp) — previously the only decorative table row
+✓ E-STACK-OP    sp is an explicit surface: a stackPointer write must declare
+                `effect stack.allocate`/`stack.free`
+✓ E-STACK-BALANCE constant-only sp adjustments; per-path frame balance at every
+                return; consistent depth at merges; allocation must equal the
+                declared `stack bytes` (the A3 prologue cross-check, now
+                static); a moved sp with no declared frame is an error.
+                E-ABI-ALIGN additionally fires at any call reached at a
+                misaligned depth
+✓ W-LINT        legal-but-never-intended shapes: self-moves, results discarded
+                into `zero`, branches whose target equals their fall-through
 ◌ E-DUP         duplicate single-valued fact; entity re-`is`-declaration; block
                 handles colliding case-insensitively; function/data/symbol label
                 collisions (LANGUAGE, grammar rules)
@@ -875,7 +898,8 @@ no rewriting. (Any cleverness belongs in a separate optimization pass over the
 ### 15.1 Pinned emission rules (IMPLEMENTED — `sasm/emit.py`)
 
 These were reverse-engineered from the golden examples and are now exact (the
-three snapshots are byte-identical). A second implementer must follow them:
+snapshots are byte-identical across all examples). A second implementer must
+follow them:
 
 - **File order:** data sections first (`.rodata`, `.data`, `.bss` order), then a
   single `\t.text`, then functions in source order. (Function-only files begin
@@ -1047,12 +1071,14 @@ status **iff it pins a checkable contract** — typically by converting a long-r
 or implicit dependency into a local fact the validator can fail — otherwise it
 stays marked intent or is dropped. Token cost never decides; checkability does.
 
-- **Symbolic values vs registers — *resolved in principle*.** `reads left`
-  (value) vs `firstSource a0` (register). Make values first-class **iff** doing so
-  turns a long-range dep into a local, checkable fact (e.g. "the value in `a1`
-  here is the same one produced at `I7`" — a real long-range link worth a typed,
-  checkable SSA name). Where a value name is *only* a gloss on a register that is
-  already local, it stays S-intent or is dropped — not promoted as unchecked docs.
+- **Symbolic values vs registers — *resolved in principle*; phi merges now have
+  a working subset.** `reads left` (value) vs `firstSource a0` (register). The
+  taint interpreter (§19.2) forced the phi question and landed the minimal
+  answer: **`mergesFrom`** (LANGUAGE §4) declares that a value is legitimately
+  another on some path (`result mergesFrom number` — fib's base case), checked
+  by both the static union and the runtime taint. Full SSA-style value identity
+  ("the value in `a1` here is the one produced at `I7`") remains open; promote
+  it only if D1 shows the residual gap matters.
 - **Multi-valued returns / structs** beyond a0/a1 — *not* resolved by the
   attention lens; this is an expressiveness/scope question (see LANGUAGE §13).
 - **Pseudo expansion visibility.** Record `LoadImmediate`'s expansion as child
@@ -1066,8 +1092,11 @@ stays marked intent or is dropped. Token cost never decides; checkability does.
 
 ## 18. Runtime debugging — the dynamic half of the trust invariant (design only)
 
-**Status: designed, not built (TODOS G), and design-reviewed** (three independent
-adversarial critiques, 2026-06-09; their blockers are folded in below).
+**Status: the R-contract catalog (§18.3) is LIVE in-process** — the §19.2 taint
+interpreter implements it (`sasm exec`) without any qemu/gdb plumbing. What
+remains gated below is the *real-binary* debugger (breakpoints on the emitted
+code under qemu); the design was adversarially reviewed by three independent
+critiques (2026-06-09; their blockers are folded in below).
 **Sequencing gate:** §18 stays design-only until (i) D1's Protocol-2 result exists
 — if `.sasm` ≈ inline-comments there, a semantic debugger is more overbuild, not
 a rescue — and (ii) the A3 static codes whose contracts the R-checks would
@@ -1184,6 +1213,9 @@ into I (wrong code); **the diagnostic names both and adjudicates neither**.
   (order-of-magnitude slowdown; off by default).
 - **`R-ABI-ALIGN`** *(static counterpart: E-ABI-ALIGN + the A3 prologue
   cross-check; residue: non-constant sp adjustment)*. sp % 16 at call rows.
+- **`R-ABI-FRAME`** *(static counterpart: the ◌ `stack bytes`-vs-prologue
+  check)*. The activation's first sp adjustment must equal the declared
+  `stack bytes`.
 - **`R-EFFECT`** *(static counterpart: E-EFFECT, and the ◌ `syscall <name>`
   table check — this is that fact's first enforcement anywhere)*. At each
   covered `EnvironmentCall` row, the runtime `a7` must match the row's `syscall`
@@ -1293,3 +1325,125 @@ underlying this whole section — that handle/value-level observation beats
 gdb-on-`.s` for agents — is itself an empirical hypothesis: if §18 is built,
 the benchmark gains a debugging task family with an arm-d-style control (gdb
 plus the comment-annotated `.s`) before that claim may appear in any headline.
+
+## 19. Verification strategy — how the verifier earns trust (IMPLEMENTED, growing)
+
+The validator is this project's trusted computing base, and hand-written
+dataflow analysis is a hard thing to trust. §19 is the answer to the honest
+objections (verifier complexity, false confidence, facts-can-lie, two-layer
+debugging): **don't make the analyzer smarter — change where truth comes
+from.** Three principles, each with a live implementation.
+
+### 19.1 Borrow truth, don't author it
+
+The cheapest correct oracle is one someone else built and millions test daily:
+
+- **The C reference is a standing differential oracle.** Every example ships a
+  `.c`; the behavioral tier runs the `.sasm`-emitted code against real inputs
+  under qemu (and the `.c` is the spec of what those runs must produce). The
+  verifier's job shrinks from *establishing* correctness to *explaining*
+  failures and catching them earlier and cheaper.
+- **Tables are borrowed, not authored** — `riscv-opcodes` for encodings and
+  def/use shapes (§7.2), the psABI for `abi.tsv`. A new architecture is a data
+  project (tables + overrides), not a verifier rewrite: the kernel (CFG,
+  liveness, value-flow, layout) is architecture-independent.
+- **The assembler and linker stay in the loop** (Tier 1): every emitted `.s`
+  must assemble as real RISC-V before anything else is believed.
+
+### 19.2 Executable semantics beat analytical semantics — the taint interpreter
+
+**`sasm exec` (`sasm/interp.py`, ~600 lines, pure Python, zero deps)** executes
+the fact rows directly on a tiny RV64IM machine where every register and every
+8-byte memory cell carries a shadow **value tag** beside its concrete bits. The
+dangerous S-check facts stop being derived and become **observed**:
+
+| fact | how it is observed |
+|------|--------------------|
+| `reads v` / `writes v` / `returns v` | the tag either is `v` (or a declared merge of it) or it isn't, at this row, on this trace → `R-VALUE-FLOW` |
+| `liveOut r:v` | snapshot `r` at the call row, compare at the resume row → `R-LIVE-OUT` |
+| `effect …` | the activation either touched non-stack memory / called / trapped or it didn't (internal-effect rule applied; observed ⊆ declared) → `R-EFFECT` |
+| `preserves r` / frame freed | callee-saved bits and `sp` at entry vs return, per activation → `R-ABI-PRESERVE` |
+| `stack bytes N` | the first `sp` adjustment either is `-N` or it isn't → `R-ABI-FRAME` |
+| `successor …` | every *executed* control transfer is checked against the CFG → `R-CFG-EDGE` |
+| sp alignment at calls | `R-ABI-ALIGN` |
+
+Two design points make it honest and sharp:
+
+- **The return address is a single-use token**, not a fake integer: `Call`
+  mints one, `Return` consumes it. Clobber `ra` and the machine halts with
+  `R-ABI-PRESERVE` naming the row — a diagnosis where real silicon gives a
+  hexdump.
+- **Tag policy mirrors the static may-form** (§18.3): an unannotated def sets
+  the tag to *unknown*; a `reads v` errors only when a source holds a
+  *different* tag; all-unknown passes and is counted *unconfirmed* in
+  coverage. A validator-clean file with legitimate unannotated re-derivations
+  never fails at runtime — and every run ends with the §18.1 coverage report
+  (blocks not executed, reads unconfirmed), so trace-passing is never mistaken
+  for verification.
+
+This closes, *on executed paths*, the very gaps §11 documents: the
+path-dependent clobber that union-merge provably misses is caught concretely
+(`fib`'s naive variant computes −510 and `R-VALUE-FLOW` names the row), and the
+`stack bytes`-vs-prologue cross-check that is still ◌ statically is enforced
+dynamically. The interpreter is also the in-process realization of §18.3's
+R-catalog — the qemu/gdb adapter remains gated (§18 header), but the contract
+checks it was designed to run are live today.
+
+**It forced a language refinement on day one.** Running `fib(10)` flagged the
+epilogue 89 times (= F(11), one per base-case activation): on the base path
+`a0` holds `number`, which *is* the result — the documented phi that static
+union-merge silently absorbed. Dynamic semantics don't let you defer the phi
+question, so the minimal §17 design landed: **`mergesFrom`** (LANGUAGE §4), a
+declared, checkable phi — `result mergesFrom number` — accepted by both the
+static union and the runtime taint check, while any *undeclared* tag still
+errors. The general SSA design stays open; the working subset is no longer.
+
+### 19.3 Fuzz the verifier, not just the program — the mutation tier
+
+**`tests/test_mutation.py`** generates mutations of known-good examples
+(immediate/offset perturbations, operand swaps on non-commutative ops, branch
+retargeting, save/restore deletion) and enforces the invariant:
+
+> Every behavior-changing mutant is caught by `validate` (static) or by the
+> taint interpreter's vectors (dynamic), or it emitted byte-identical `.s`
+> (provably equivalent). Anything else is a **HOLE**, and holes fail the build
+> unless allow-listed *with a written reason* — the verifier's known
+> blind-spot ledger.
+
+First run, 75 mutants: 32 caught statically, 30 dynamically, 13 equivalent —
+after the tier's **first real finding**: moving a stack slot outside the frame
+only *warned* (`W-SLOT`) while the access corrupted the caller's frame and
+passed behavioral tests (the victim slot happened to be unused). That is the
+false-confidence scenario made concrete, found by machine, and fixed:
+out-of-frame slots are now the error `E-SLOT-RANGE`. The verifier stopped
+being something you trust and became something you measure.
+
+### 19.4 The anti-compiler ratchet (locked)
+
+The "drift toward C/Rust/Zig" risk has a structural answer, now a governing
+rule:
+
+> **`π` may never change emitted bytes based on analysis.** Register
+> allocation, instruction selection, layout optimization, type-driven codegen
+> — any feature that makes emission *smarter* — is a compiler feature and is
+> rejected. Types, regions, effects, and every other S-fact can **fail** a
+> build; they can never **shape** one.
+
+A compiler makes decisions; this layer checks claims. The projection invariant
+(§11: stripping all S-facts leaves byte-identical `.s`) is mechanically
+testable, so the ratchet cannot loosen silently. Vocabulary creep is policed by
+the D1 calibration rule: a fact class that never moves edit accuracy is dropped.
+
+### 19.5 What is deliberately not done
+
+SMT / formal per-block equivalence (translation validation): π is 1:1
+templating, so there is no translation to validate — the thing needing
+verification is *facts vs. behavior*, and the taint interpreter gets most of
+that for a fraction of the effort, with failure modes a human can read.
+Likewise full symbolic execution: trace-scoped concrete checking plus the
+coverage report is the honest, cheap point on the curve. Both remain options
+if the D1 benchmark ever shows the residual gap matters.
+
+Remaining §19 work is tracked in TODOS H: `check --coverage`/`--strict`
+(per-fact verification labeling as CLI output), differential exec-vs-qemu
+state comparison, and a broader mutation-operator corpus.

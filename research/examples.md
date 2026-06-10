@@ -12,7 +12,7 @@ The `.sasm` is intentionally many times longer than the `.s`. That verbosity is
 the point (DESIGN §2.1): it stores intent, dataflow, effects, ABI contracts, and
 named stack slots that the `.s` throws away. Lowering strips all of it.
 
-## The three demos
+## The core demos
 
 ### 1. `simple_add2/` — leaf function
 `add2(a, b) = a + b`. No memory, no stack, no calls. The smallest thing that
@@ -40,7 +40,9 @@ call are moved to callee-saved registers and the callee-saved contract is honore
 
 It also demonstrates the **internal-effect rule** (stack traffic is `region
 stackFrame` → not an observable effect, so the function declares only `effect
-call`) and notes the base-case/recurse **phi merge** at the epilogue.
+call`) and the base-case/recurse **phi merge** at the epilogue — now a
+*declared, checked* fact (`result mergesFrom number`, LANGUAGE §4), accepted by
+both the static union and the runtime taint check.
 
 ## The gauntlet (e2e shakedown examples, 2026-06)
 
@@ -73,6 +75,51 @@ step's `reads`/`writes` chain pins the order. Plus a position-weighted checksum
 function in the same file: two functions sharing the file-global namespace
 (values named `cursor`/`walker`, not twice `cursor` — the multi-function naming
 rule in practice).
+
+## The device set (Arduino / RPi-style hardware programs, 2026-06)
+
+GPIO-style programs shaped like real embedded code — Arduino names, RPi
+mechanics (the mapped register base is a *parameter*, like mmap'ing
+`/dev/gpiomem`, which is also what makes them testable: the harness and the
+taint interpreter hand in a fake register block and assert on it). Register
+map: SiFive FE310, the RISC-V "Arduino" chip. These are the first exercisers
+of `memoryRegion kind device`, `volatile`, and the `device.read`/`device.write`
+effects — and they earned two interpreter refinements (insn-fact-driven effect
+observation with a runtime *region-kind vs. actual-address* check, and
+GAS-faithful contiguous data placement).
+
+### 7. `device_gpio/` — LEDs and digital I/O
+`pinModeOutput` / `digitalWrite` / `digitalRead` / `blink`. Read-modify-write
+bit twiddling where a stale register image corrupts *other* pins (the harness
+checks exactly that), every access carrying its device-region + volatile
+facts, and the Arduino blink sketch as a callee: three values riding two calls
+per iteration in `s0..s3`, with self-looping spin-delay blocks.
+
+### 8. `device_motor/` — motors
+`pwmSetDuty` (analogWrite), `motorDrive` (duty sign → H-bridge direction bit +
+magnitude → PWM), and `stepperAdvance` — the embedded staple: a 4-phase coil
+table in `.rodata` driven onto the GPIO with modular phase state, settle
+delays, and **two regions with two disciplines in one loop body** (readonly
+table reads, volatile device writes).
+
+## The rest of the suite
+
+### 9. `hello_world/` — standalone `_start` + syscalls
+No libc, no caller: a `_start` program writing to stdout via `EnvironmentCall`
+with `arg` bindings and exiting via a **noreturn syscall** (`terminates
+syscall` — the terminator kind the gauntlet shakedown added). `.rodata` data.
+
+### 10. `sum_of_squares/` — multi-function program
+Three functions in one file: a loop with `mul`, decimal conversion with
+`div`/`rem` into a stack buffer, and a `_start` driver; prints `385`.
+
+### 11. `data_demo/` — `.data` + `.bss` round-trip
+Global loads/stores, alignment, initialized vs reserved data; exits `42`.
+
+### 12. `linked/` — two translation units
+`main.sasm` + `lib.sasm`: an external `symbol` entity, a cross-TU call, linked
+into one binary; exits `42`. (Also the example that motivated the multi-TU
+handle-qualification rules in DESIGN §18.2.)
 
 ## Design principles these examples follow
 

@@ -47,7 +47,8 @@ firstResult meaning "fib(number-1); must survive the second call"
 
 result is value
 result type Int64
-result meaning "the returned Fibonacci number"
+result mergesFrom number
+result meaning "the returned Fibonacci number; on the base path it IS number (declared phi)"
 
 Fib is function
 Fib symbol fib
@@ -240,9 +241,9 @@ addResults purpose "result = fib(number-1) + fib(number-2)"
 
 # ---- epilogue: restore + free + return ----
 # NOTE (value-flow): at Epilogue, a0 is a merge (phi) of `number` (base path,
-# baseCaseBranch) and `result` (recurse path, addResults). The return is defined
-# on both paths because a0 is written on both; first-class phi values are a §17
-# open question.
+# baseCaseBranch) and `result` (recurse path, addResults). The merge is DECLARED
+# above (`result mergesFrom number`), so both the static union and the runtime
+# taint check accept the base path while still rejecting any other tag.
 
 restoreReturnAddress is insn
 restoreReturnAddress in Epilogue

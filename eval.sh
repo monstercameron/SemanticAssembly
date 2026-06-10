@@ -14,7 +14,7 @@ echo "==================== 1/3  compiler snapshots (python) ====================
 bash tests/snapshot.sh || fail=1
 
 echo
-echo "==================== 2/3  validator (python) ============================="
+echo "==================== 2/3  validator + interpreter (python) ==============="
 bash tests/check.sh || fail=1
 python tests/sugar_test.py || fail=1
 python tests/ordinal_test.py || fail=1
@@ -22,6 +22,11 @@ python tests/fmt_test.py || fail=1
 python tests/symbol_test.py || fail=1
 python tests/refine_test.py || fail=1
 python tests/gen_test.py || fail=1
+# taint-interpreter + regression + mutation tiers (DESIGN §19)
+if python -c "import pytest" 2>/dev/null; then
+  python -m pytest tests/test_interp.py tests/test_gauntlet_shakedown.py tests/test_lint.py -q || fail=1
+fi
+python tests/test_mutation.py || fail=1
 
 echo
 echo "==================== 3/3  behavioral: assemble + run (qemu-riscv64) ======"

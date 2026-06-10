@@ -1,0 +1,599 @@
+# Motor control over memory-mapped blocks (Arduino analogues in motor.c).
+#   pwmSetDuty(pwm, channel, duty)              pwm[8 + channel] = duty
+#   motorDrive(gpio, pwm, dirPin, ch, duty)     dir bit by duty sign, then PWM
+#   stepperAdvance(gpio, phase, steps)          4-phase table-driven stepping
+#
+# Two regions with two disciplines in one loop: the phase table is READONLY
+# data; the GPIO/PWM registers are a VOLATILE DEVICE. The facts keep them
+# apart; raw .s makes them all just "memory".
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+motorRegisters is memoryRegion
+motorRegisters kind device
+motorRegisters volatile yes
+motorRegisters aliases none
+
+phaseTable is memoryRegion
+phaseTable kind readonly
+phaseTable aliases none
+
+# ---- the 4-phase full-step sequence (contiguous .rodata words) ----
+
+stepPattern is data
+stepPattern section rodata
+stepPattern type Nat32
+stepPattern value 3
+stepPattern binding local
+stepPattern purpose "phase 0: coils AB (0b0011) — `la stepPattern` is the table base"
+
+stepPatternBC is data
+stepPatternBC section rodata
+stepPatternBC type Nat32
+stepPatternBC value 6
+stepPatternBC binding local
+stepPatternBC purpose "phase 1: coils BC (0b0110)"
+
+stepPatternCD is data
+stepPatternCD section rodata
+stepPatternCD type Nat32
+stepPatternCD value 12
+stepPatternCD binding local
+stepPatternCD purpose "phase 2: coils CD (0b1100)"
+
+stepPatternDA is data
+stepPatternDA section rodata
+stepPatternDA type Nat32
+stepPatternDA value 9
+stepPatternDA binding local
+stepPatternDA purpose "phase 3: coils DA (0b1001)"
+
+# ---- values ----
+
+gpioBase is value
+gpioBase type Address
+gpioBase meaning "mapped GPIO block (output_val at +12 drives dir pin / coils)"
+
+pwmBase is value
+pwmBase type Address
+pwmBase meaning "mapped PWM block (duty compare registers at +0x20 + 4*channel)"
+
+pwmChannel is value
+pwmChannel type Int64
+pwmChannel signed yes
+pwmChannel meaning "which PWM channel — indexes the compare registers"
+
+dutyValue is value
+dutyValue type Int64
+dutyValue signed yes
+dutyValue meaning "PWM duty; sign selects motor direction in motorDrive"
+
+directionPin is value
+directionPin type Int64
+directionPin signed yes
+directionPin meaning "GPIO pin carrying the H-bridge direction signal"
+
+phaseIndex is value
+phaseIndex type Int64
+phaseIndex signed yes
+phaseIndex meaning "stepper phase 0..3; modular, loop-carried, returned"
+
+stepCount is value
+stepCount type Int64
+stepCount signed yes
+stepCount meaning "how many full steps to advance"
+
+stepIndex is value
+stepIndex type Int64
+stepIndex signed yes
+stepIndex meaning "loop counter over steps"
+
+patternBase is value
+patternBase type Address
+patternBase meaning "base address of the phase table; loop-invariant"
+
+settleRemaining is value
+settleRemaining type Int64
+settleRemaining signed yes
+settleRemaining meaning "inter-step settle countdown; loop-carried in the spin"
+
+# ============================ pwmSetDuty ============================
+
+PwmSetDuty is function
+PwmSetDuty symbol pwmSetDuty
+PwmSetDuty visibility global
+PwmSetDuty abi linux.riscv64
+PwmSetDuty in pwmBase Address a0
+PwmSetDuty in pwmChannel Int64 a1
+PwmSetDuty in dutyValue Int64 a2
+PwmSetDuty effect device.write motorRegisters
+PwmSetDuty leaf yes
+PwmSetDuty stack bytes 0
+PwmSetDuty purpose "Arduino analogWrite: one indexed device store sets the channel's duty"
+
+DutyEntry is block
+DutyEntry in PwmSetDuty
+DutyEntry entry yes
+DutyEntry terminates return
+DutyEntry purpose "compute the channel's compare-register address, store the duty"
+
+scaleChannelOffset is insn
+scaleChannelOffset in DutyEntry
+scaleChannelOffset operation ShiftLeftLogicalImmediate
+scaleChannelOffset destination t0
+scaleChannelOffset firstSource a1
+scaleChannelOffset immediate 2
+scaleChannelOffset reads pwmChannel
+scaleChannelOffset purpose "channel * 4 — one bad shift and the WRONG motor changes speed"
+
+computeCompareAddress is insn
+computeCompareAddress in DutyEntry
+computeCompareAddress operation Add
+computeCompareAddress destination t0
+computeCompareAddress firstSource a0
+computeCompareAddress secondSource t0
+computeCompareAddress reads pwmBase
+computeCompareAddress purpose "base + channel*4 (the +0x20 lands in the store offset)"
+
+storeDuty is insn
+storeDuty in DutyEntry
+storeDuty operation StoreWord
+storeDuty secondSource a2
+storeDuty base t0
+storeDuty offset 32
+storeDuty effect device.write
+storeDuty memory region motorRegisters
+storeDuty memory volatile yes
+storeDuty reads dutyValue
+storeDuty purpose "pwmcmp[channel] = duty — the motor speed changes HERE"
+
+returnFromDuty is insn
+returnFromDuty in DutyEntry
+returnFromDuty operation Return
+returnFromDuty purpose "no result"
+
+# ============================ motorDrive ============================
+
+MotorDrive is function
+MotorDrive symbol motorDrive
+MotorDrive visibility global
+MotorDrive abi linux.riscv64
+MotorDrive in gpioBase Address a0
+MotorDrive in pwmBase Address a1
+MotorDrive in directionPin Int64 a2
+MotorDrive in pwmChannel Int64 a3
+MotorDrive in dutyValue Int64 a4
+MotorDrive effect device.read motorRegisters
+MotorDrive effect device.write motorRegisters
+MotorDrive effect call
+MotorDrive leaf no
+MotorDrive calls pwmSetDuty
+MotorDrive stack bytes 16
+MotorDrive stack align 16
+MotorDrive preserves returnAddress
+MotorDrive purpose "direction bit from the duty's sign, magnitude to the PWM channel"
+
+SlotDriveReturnAddress is stackSlot
+SlotDriveReturnAddress in MotorDrive
+SlotDriveReturnAddress offset 8
+SlotDriveReturnAddress type Address
+SlotDriveReturnAddress role savedRegister
+SlotDriveReturnAddress stores returnAddress
+
+DriveEntry is block
+DriveEntry in MotorDrive
+DriveEntry entry yes
+DriveEntry terminates branch
+DriveEntry successor Reverse
+DriveEntry successor Forward
+DriveEntry purpose "frame, save ra, read the dir register image, dispatch on duty sign"
+
+Forward is block
+Forward in MotorDrive
+Forward terminates jump
+Forward predecessor DriveEntry
+Forward successor ApplyDuty
+Forward purpose "duty >= 0: clear the direction bit"
+
+Reverse is block
+Reverse in MotorDrive
+Reverse terminates fallthrough
+Reverse predecessor DriveEntry
+Reverse successor ApplyDuty
+Reverse purpose "duty < 0: set the direction bit, duty = -duty"
+
+ApplyDuty is block
+ApplyDuty in MotorDrive
+ApplyDuty terminates return
+ApplyDuty predecessor Forward
+ApplyDuty predecessor Reverse
+ApplyDuty purpose "write the dir image back, shuffle args, call pwmSetDuty, return"
+
+allocateDriveFrame is insn
+allocateDriveFrame in DriveEntry
+allocateDriveFrame operation AddImmediate
+allocateDriveFrame destination stackPointer
+allocateDriveFrame firstSource stackPointer
+allocateDriveFrame immediate -16
+allocateDriveFrame effect stack.allocate
+allocateDriveFrame purpose "16-byte frame for ra"
+
+saveDriveReturnAddress is insn
+saveDriveReturnAddress in DriveEntry
+saveDriveReturnAddress operation StoreDoubleword
+saveDriveReturnAddress secondSource returnAddress
+saveDriveReturnAddress base stackPointer
+saveDriveReturnAddress offset SlotDriveReturnAddress
+saveDriveReturnAddress effect memory.write
+saveDriveReturnAddress memory region stackFrame
+saveDriveReturnAddress saves returnAddress SlotDriveReturnAddress
+saveDriveReturnAddress purpose "the pwmSetDuty call clobbers returnAddress"
+
+loadDirectionImage is insn
+loadDirectionImage in DriveEntry
+loadDirectionImage operation LoadWord
+loadDirectionImage destination t0
+loadDirectionImage base a0
+loadDirectionImage offset 12
+loadDirectionImage effect device.read
+loadDirectionImage memory region motorRegisters
+loadDirectionImage memory volatile yes
+loadDirectionImage reads gpioBase
+loadDirectionImage purpose "output_val image — other pins (coils!) live here, RMW required"
+
+loadDriveOne is insn
+loadDriveOne in DriveEntry
+loadDriveOne operation LoadImmediate
+loadDriveOne destination t1
+loadDriveOne immediate 1
+loadDriveOne purpose "bit seed (adjacent scratch)"
+
+shiftDirectionMask is insn
+shiftDirectionMask in DriveEntry
+shiftDirectionMask operation ShiftLeftLogical
+shiftDirectionMask destination t1
+shiftDirectionMask firstSource t1
+shiftDirectionMask secondSource a2
+shiftDirectionMask reads directionPin
+shiftDirectionMask purpose "mask = 1 << dirPin"
+
+dispatchOnSign is insn
+dispatchOnSign in DriveEntry
+dispatchOnSign operation BranchLessThan
+dispatchOnSign firstSource a4
+dispatchOnSign secondSource zero
+dispatchOnSign target Reverse
+dispatchOnSign fallthrough Forward
+dispatchOnSign reads dutyValue
+dispatchOnSign condition "duty < 0: reverse (set dir bit, negate duty)"
+
+invertDirectionMask is insn
+invertDirectionMask in Forward
+invertDirectionMask operation ExclusiveOrImmediate
+invertDirectionMask destination t1
+invertDirectionMask firstSource t1
+invertDirectionMask immediate -1
+invertDirectionMask purpose "~mask"
+
+clearDirectionBit is insn
+clearDirectionBit in Forward
+clearDirectionBit operation And
+clearDirectionBit destination t0
+clearDirectionBit firstSource t0
+clearDirectionBit secondSource t1
+clearDirectionBit purpose "image &= ~mask: forward"
+
+jumpToApply is insn
+jumpToApply in Forward
+jumpToApply operation Jump
+jumpToApply target ApplyDuty
+jumpToApply purpose "join the common tail"
+
+setDirectionBit is insn
+setDirectionBit in Reverse
+setDirectionBit operation Or
+setDirectionBit destination t0
+setDirectionBit firstSource t0
+setDirectionBit secondSource t1
+setDirectionBit purpose "image |= mask: reverse"
+
+negateDuty is insn
+negateDuty in Reverse
+negateDuty operation Subtract
+negateDuty destination a4
+negateDuty firstSource zero
+negateDuty secondSource a4
+negateDuty reads dutyValue
+negateDuty writes dutyValue
+negateDuty purpose "duty = -duty: the PWM wants the magnitude"
+
+storeDirectionImage is insn
+storeDirectionImage in ApplyDuty
+storeDirectionImage operation StoreWord
+storeDirectionImage secondSource t0
+storeDirectionImage base a0
+storeDirectionImage offset 12
+storeDirectionImage effect device.write
+storeDirectionImage memory region motorRegisters
+storeDirectionImage memory volatile yes
+storeDirectionImage reads gpioBase
+storeDirectionImage purpose "direction changes HERE — before a0 is repurposed for the call"
+
+shufflePwmBase is insn
+shufflePwmBase in ApplyDuty
+shufflePwmBase operation Move
+shufflePwmBase destination a0
+shufflePwmBase firstSource a1
+shufflePwmBase reads pwmBase
+shufflePwmBase writes pwmBase
+shufflePwmBase purpose "first callee argument: the PWM base (gpio base is dead now)"
+
+shuffleChannel is insn
+shuffleChannel in ApplyDuty
+shuffleChannel operation Move
+shuffleChannel destination a1
+shuffleChannel firstSource a3
+shuffleChannel reads pwmChannel
+shuffleChannel writes pwmChannel
+shuffleChannel purpose "second callee argument: the channel"
+
+shuffleDuty is insn
+shuffleDuty in ApplyDuty
+shuffleDuty operation Move
+shuffleDuty destination a2
+shuffleDuty firstSource a4
+shuffleDuty reads dutyValue
+shuffleDuty writes dutyValue
+shuffleDuty purpose "third callee argument: the (now non-negative) duty"
+
+callSetDuty is insn
+callSetDuty in ApplyDuty
+callSetDuty operation Call
+callSetDuty symbol pwmSetDuty
+callSetDuty effect call
+callSetDuty purpose "hand off to the PWM; nothing must survive this call"
+
+restoreDriveReturnAddress is insn
+restoreDriveReturnAddress in ApplyDuty
+restoreDriveReturnAddress operation LoadDoubleword
+restoreDriveReturnAddress destination returnAddress
+restoreDriveReturnAddress base stackPointer
+restoreDriveReturnAddress offset SlotDriveReturnAddress
+restoreDriveReturnAddress effect memory.read
+restoreDriveReturnAddress memory region stackFrame
+restoreDriveReturnAddress restores returnAddress SlotDriveReturnAddress
+restoreDriveReturnAddress purpose "restore return address"
+
+freeDriveFrame is insn
+freeDriveFrame in ApplyDuty
+freeDriveFrame operation AddImmediate
+freeDriveFrame destination stackPointer
+freeDriveFrame firstSource stackPointer
+freeDriveFrame immediate 16
+freeDriveFrame effect stack.free
+freeDriveFrame purpose "free the frame"
+
+returnFromDrive is insn
+returnFromDrive in ApplyDuty
+returnFromDrive operation Return
+returnFromDrive purpose "no result"
+
+# ============================ stepperAdvance ============================
+
+StepperAdvance is function
+StepperAdvance symbol stepperAdvance
+StepperAdvance visibility global
+StepperAdvance abi linux.riscv64
+StepperAdvance in gpioBase Address a0
+StepperAdvance in phaseIndex Int64 a1
+StepperAdvance in stepCount Int64 a2
+StepperAdvance out phaseIndex Int64 a0
+StepperAdvance effect memory.read phaseTable
+StepperAdvance effect device.write motorRegisters
+StepperAdvance leaf yes
+StepperAdvance stack bytes 0
+StepperAdvance purpose "n full steps through the 4-phase table; returns the new phase"
+
+StepEntry is block
+StepEntry in StepperAdvance
+StepEntry entry yes
+StepEntry terminates fallthrough
+StepEntry successor StepCheck
+StepEntry purpose "index = 0; load the table base once (loop-invariant)"
+
+StepCheck is block
+StepCheck in StepperAdvance
+StepCheck terminates branch
+StepCheck predecessor StepEntry
+StepCheck predecessor StepNext
+StepCheck successor StepDone
+StepCheck successor StepBody
+StepCheck loop header
+StepCheck purpose "loop guard: index < steps"
+
+StepBody is block
+StepBody in StepperAdvance
+StepBody terminates fallthrough
+StepBody predecessor StepCheck
+StepBody successor StepSettle
+StepBody loop body
+StepBody purpose "phase = (phase+1) & 3; coils = table[phase]; write to the device"
+
+StepSettle is block
+StepSettle in StepperAdvance
+StepSettle terminates branch
+StepSettle predecessor StepBody
+StepSettle predecessor StepSettle
+StepSettle successor StepSettle
+StepSettle successor StepNext
+StepSettle loop body
+StepSettle purpose "settle delay: the rotor needs time to follow the field"
+
+StepNext is block
+StepNext in StepperAdvance
+StepNext terminates jump
+StepNext predecessor StepSettle
+StepNext successor StepCheck
+StepNext loop body
+StepNext backEdgeTo StepCheck
+StepNext purpose "index++, next step"
+
+StepDone is block
+StepDone in StepperAdvance
+StepDone terminates return
+StepDone predecessor StepCheck
+StepDone purpose "return the final phase so the caller can continue the sequence"
+
+initializeStepIndex is insn
+initializeStepIndex in StepEntry
+initializeStepIndex operation LoadImmediate
+initializeStepIndex destination t0
+initializeStepIndex immediate 0
+initializeStepIndex writes stepIndex
+initializeStepIndex purpose "index = 0"
+
+loadPatternBase is insn
+loadPatternBase in StepEntry
+loadPatternBase operation LoadAddress
+loadPatternBase destination t1
+loadPatternBase symbol stepPattern
+loadPatternBase writes patternBase
+loadPatternBase purpose "table base — read once, reused every iteration"
+
+stepGuard is insn
+stepGuard in StepCheck
+stepGuard operation BranchGreaterOrEqual
+stepGuard firstSource t0
+stepGuard secondSource a2
+stepGuard target StepDone
+stepGuard fallthrough StepBody
+stepGuard reads stepIndex
+stepGuard reads stepCount
+stepGuard condition "index >= steps: motion complete"
+
+advancePhase is insn
+advancePhase in StepBody
+advancePhase operation AddImmediate
+advancePhase destination a1
+advancePhase firstSource a1
+advancePhase immediate 1
+advancePhase reads phaseIndex
+advancePhase purpose "phase + 1 (pre-wrap)"
+
+wrapPhase is insn
+wrapPhase in StepBody
+wrapPhase operation AndImmediate
+wrapPhase destination a1
+wrapPhase firstSource a1
+wrapPhase immediate 3
+wrapPhase writes phaseIndex
+wrapPhase purpose "modular wrap: phase &= 3 — the stepper's state machine"
+
+scalePhaseOffset is insn
+scalePhaseOffset in StepBody
+scalePhaseOffset operation ShiftLeftLogicalImmediate
+scalePhaseOffset destination t2
+scalePhaseOffset firstSource a1
+scalePhaseOffset immediate 2
+scalePhaseOffset reads phaseIndex
+scalePhaseOffset purpose "phase * 4 (Nat32 table entries)"
+
+computePatternAddress is insn
+computePatternAddress in StepBody
+computePatternAddress operation Add
+computePatternAddress destination t3
+computePatternAddress firstSource t1
+computePatternAddress secondSource t2
+computePatternAddress reads patternBase
+computePatternAddress purpose "&table[phase]"
+
+loadPhasePattern is insn
+loadPhasePattern in StepBody
+loadPhasePattern operation LoadWord
+loadPhasePattern destination t4
+loadPhasePattern base t3
+loadPhasePattern offset 0
+loadPhasePattern effect memory.read
+loadPhasePattern memory region phaseTable
+loadPhasePattern purpose "the coil pattern — READONLY data, not device memory"
+
+driveCoils is insn
+driveCoils in StepBody
+driveCoils operation StoreWord
+driveCoils secondSource t4
+driveCoils base a0
+driveCoils offset 12
+driveCoils effect device.write
+driveCoils memory region motorRegisters
+driveCoils memory volatile yes
+driveCoils reads gpioBase
+driveCoils purpose "output_val = pattern: all four coil pins change in one store"
+
+armSettleDelay is insn
+armSettleDelay in StepBody
+armSettleDelay operation LoadImmediate
+armSettleDelay destination t5
+armSettleDelay immediate 500
+armSettleDelay writes settleRemaining
+armSettleDelay purpose "arm the settle countdown"
+
+settleDown is insn
+settleDown in StepSettle
+settleDown operation AddImmediate
+settleDown destination t5
+settleDown firstSource t5
+settleDown immediate -1
+settleDown reads settleRemaining
+settleDown writes settleRemaining
+settleDown purpose "count down"
+
+settleBranch is insn
+settleBranch in StepSettle
+settleBranch operation BranchIfNonzero
+settleBranch firstSource t5
+settleBranch target StepSettle
+settleBranch fallthrough StepNext
+settleBranch reads settleRemaining
+settleBranch liveOut t5:settleRemaining
+settleBranch condition "spin until the countdown hits zero"
+
+advanceStepIndex is insn
+advanceStepIndex in StepNext
+advanceStepIndex operation AddImmediate
+advanceStepIndex destination t0
+advanceStepIndex firstSource t0
+advanceStepIndex immediate 1
+advanceStepIndex reads stepIndex
+advanceStepIndex writes stepIndex
+advanceStepIndex purpose "index++"
+
+stepBackEdge is insn
+stepBackEdge in StepNext
+stepBackEdge operation Jump
+stepBackEdge target StepCheck
+stepBackEdge liveOut t0:stepIndex
+stepBackEdge liveOut t1:patternBase
+stepBackEdge liveOut a1:phaseIndex
+stepBackEdge purpose "loop-carried: index, table base, and phase survive the iteration"
+
+movePhaseToResult is insn
+movePhaseToResult in StepDone
+movePhaseToResult operation Move
+movePhaseToResult destination a0
+movePhaseToResult firstSource a1
+movePhaseToResult reads phaseIndex
+movePhaseToResult writes phaseIndex
+movePhaseToResult purpose "the final phase is the result"
+
+returnPhase is insn
+returnPhase in StepDone
+returnPhase operation Return
+returnPhase returns phaseIndex
+returnPhase purpose "caller threads this into the next stepperAdvance call"

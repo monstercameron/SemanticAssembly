@@ -116,7 +116,7 @@
   catches the mistakes assembly normally hides.</p>
   <div class="cta">
     <a class="btn p" href="#idea">See the idea →</a>
-    <a class="btn s" href="https://github.com/" id="repo">Repository</a>
+    <a class="btn s" href="https://github.com/monstercameron/SemanticAssembly" id="repo">Repository</a>
   </div>
   <div style="margin-top:30px" class="flow">
     <b>.sasm</b><span class="ar">→</span>parse<span class="ar">→</span><b>facts</b>
@@ -131,9 +131,10 @@
 <section id="why"><div class="wrap">
   <div class="kicker">The premise</div>
   <h2>It's not that the model can't read assembly.</h2>
-  <p>Raw assembly is hard for an LLM to edit <em>reliably</em> because correctness
-  lives in <strong>long-range, implicit, stateful</strong> dependencies — exactly
-  the regime where attention degrades:</p>
+  <p>Raw assembly is hard for an LLM to edit <em>reliably</em> because the facts
+  an edit depends on are not merely far away in the file — mostly they are
+  <strong>nowhere in the text at all</strong>, and must be derived by replaying
+  the machine in the model's head:</p>
   <div class="grid2">
     <div class="card"><h3>Which value is in <code>a1</code> here?</h3>
       <p class="mut">It depends on every prior instruction. Reconstructing it means
@@ -273,14 +274,16 @@ add2:
   <div class="kicker">The payoff</div>
   <h2>The validator is the point.</h2>
   <p>Syntax isn't the value — <em>checking</em> is. The validator recomputes the
-  truth from authoritative facts (a CFG, forward and backward liveness, a value-flow
-  may-analysis) and judges every assertion against it. The full diagnostic catalog —
-  19 stable codes, each naming the entity handle at fault:</p>
+  truth from authoritative facts (a CFG, block-layout rules, forward and backward
+  liveness, a value-flow may-analysis) and judges every assertion against it.
+  26 enforced codes today (4 more specified, enforcement pending — the docs track
+  exactly which is which), each naming the entity handle at fault:</p>
   <div class="codes">
     <span>E-ISA-OPCODE</span><span>E-ISA-REG</span><span>E-ISA-FIELD</span><span>E-REF</span>
     <span>E-IMM-RANGE</span><span>E-ORDER-MIXED</span><span>E-ABI-ALIGN</span>
     <span>E-ABI-PRESERVE</span><span>E-LEAF</span><span>E-EFFECT</span><span>E-TYPE</span>
-    <span>W-SLOT</span><span>E-CFG-EDGE</span><span>E-LIVE-UNDEF</span><span>E-LIVE-RET</span>
+    <span>E-SLOT-RANGE</span><span>E-RESERVED</span><span>E-STACK-OP</span><span>E-STACK-BALANCE</span><span>W-LINT</span><span>E-CFG-EDGE</span><span>E-CFG-LAYOUT</span><span>E-LIVE-UNDEF</span>
+    <span>E-LIVE-RET</span><span>E-LIVE-ASSERT</span><span>W-UNREACHABLE</span>
     <span>W-DEAD</span><span>W-CLOBBER</span><span>E-VALUE-FLOW</span><span>E-DERIVABLE</span>
   </div>
 
@@ -294,6 +297,18 @@ add2:
   <p class="small">A value destroyed across a call — normally invisible — surfaced
   mechanically, pointing at the exact instruction. That is the loop the format
   exists for: <em>edit → validate → diagnostic (with a handle) → re-edit.</em></p>
+
+  <h3 style="margin-top:30px">And the verifier doesn't get a free pass</h3>
+  <p>Two more layers check the checker (DESIGN §19): a <strong>taint-tracking
+  interpreter</strong> (<code>sasm exec</code>) executes the fact rows with shadow
+  value tags and <em>observes</em> the dangerous facts at runtime — bindings,
+  liveness across calls, effects, frame discipline — catching on the executed
+  path exactly the cases static analysis provably can't. And a
+  <strong>mutation tier</strong> fuzzes the verifier itself: every
+  behavior-changing mutation of a known-good example must be caught, or the
+  build fails. Its first run found a real hole (out-of-frame stack slots only
+  warned while corrupting the caller's frame) — now the error
+  <code>E-SLOT-RANGE</code>.</p>
 </div></section>
 
 <!-- PROOF -->
@@ -305,16 +320,23 @@ add2:
   golden, it assembles as real RISC-V, and it <em>runs correctly</em> under
   <code>qemu-riscv64</code>.</p>
 <pre class="term"><code><span class="pr">$</span> docker run --rm sasm-eval
-1/3 compiler snapshots ... <span class="ok">all snapshots match</span>
+1/3 compiler snapshots ... <span class="ok">all snapshots match</span>  (11 examples)
 2/3 validator         ... <span class="ok">all examples validate clean</span>
-3/3 behavioral (qemu) ... add2=5  sum_array=15  fib(10)=55  hello: ok
+3/3 behavioral (qemu) ... fib(10)=55  ack(3,3)=61  quicksort: sorted  revlist: ok
 ==================== <span class="ok">ALL EVAL CHECKS PASSED</span> ====================</code></pre>
   <table>
     <tr><th>Example</th><th>Exercises</th></tr>
     <tr><td><code>simple_add2</code></td><td>leaf function, ABI in/out</td></tr>
     <tr><td><code>challenging_sum_array</code></td><td>loop, real CFG, memory reads, loop-carried values</td></tr>
     <tr><td><code>brainworms_fib</code></td><td>recursion, stack frame, named slots, callee-saved save/restore, clobber handling</td></tr>
-    <tr><td><code>hello_world</code></td><td>standalone <code>_start</code>, <code>.rodata</code>, syscalls</td></tr>
+    <tr><td><code>hello_world</code></td><td>standalone <code>_start</code>, <code>.rodata</code>, syscalls (noreturn-syscall terminator)</td></tr>
+    <tr><td><code>sum_of_squares</code></td><td>multi-function program, <code>mul</code>/<code>div</code>/<code>rem</code>, stack buffer; prints <code>385</code></td></tr>
+    <tr><td><code>data_demo</code> · <code>linked</code></td><td><code>.data</code>/<code>.bss</code> round-trip · two translation units, cross-TU call</td></tr>
+    <tr><td><code>gauntlet_ackermann</code></td><td><strong>nested recursion</strong> <code>ack(m-1, ack(m, n-1))</code>, call-result binding; 2432 frames</td></tr>
+    <tr><td><code>gauntlet_quicksort</code></td><td><strong>two recursions + mutating partition loop</strong>, 8-block CFG, three values riding a call in <code>s0/s1/s2</code></td></tr>
+    <tr><td><code>gauntlet_revlist</code></td><td><strong>in-place pointer rotation</strong> where row order is the algorithm; two functions, one TU</td></tr>
+    <tr><td><code>device_gpio</code></td><td><strong>Arduino-style LED I/O</strong> — pinMode/digitalWrite/digitalRead/blink over an mmap-style GPIO base; device + volatile regions, RMW bit ops</td></tr>
+    <tr><td><code>device_motor</code></td><td><strong>motor control</strong> — PWM duty, sign-driven direction, table-driven 4-phase stepper; readonly + device regions in one loop</td></tr>
   </table>
 </div></section>
 
@@ -326,18 +348,21 @@ add2:
     <div class="card">
       <h3 class="status-ok">Working today</h3>
       <ul class="clean">
-        <li>Compiler for RV64 "Tier A" (RV64I + M + Zicond + scalar atomics) — byte-identical, assembling, executing.</li>
-        <li>Validator: the entire 19-code catalog, zero false positives on the examples.</li>
-        <li>Self-contained Docker eval environment.</li>
+        <li>Compiler for RV64 "Tier A" (RV64I + M + Zicond + scalar atomics) — byte-identical, assembling, executing across thirteen examples.</li>
+        <li>Validator: 26 enforced codes, zero false positives — incl. <code>E-CFG-LAYOUT</code> (block layout is checked, not assumed) and the call-result binding rule, both landed by an e2e shakedown on the gauntlet examples.</li>
+        <li>Taint interpreter (<code>sasm exec</code>): the semantic facts checked <em>dynamically</em> (<code>R-*</code> catalog), with declared phis (<code>mergesFrom</code>) and a trace-coverage report.</li>
+        <li>Mutation tier: 75 mutants, every behavior-changing one caught statically or dynamically; uncaught holes fail the build.</li>
+        <li>Self-contained Docker eval environment (snapshots + validator + interpreter + mutation + qemu).</li>
         <li>Pure-Python toolchain, no dependencies.</li>
       </ul>
     </div>
     <div class="card">
       <h3 style="color:var(--warn)">Not done yet</h3>
       <ul class="clean">
+        <li>Four specified-but-unenforced codes (duplicate facts, data contracts, ordinal sanity, extension gating) — tracked in the enforcement-status table; their facts read as intent until each lands.</li>
         <li>General <code>E-DERIVABLE</code> reachability linter (research-grade).</li>
         <li>Broader ISA coverage (Tiers B/V/P) via the official <code>riscv-opcodes</code> generator.</li>
-        <li>Compiler edges the examples don't exercise: multi-function files, pipe sugar, <code>ordinal</code> ordering.</li>
+        <li>The premise benchmark (the experiment below) and the runtime-debugging design (DESIGN §18), which stays design-only until that benchmark runs.</li>
       </ul>
     </div>
   </div>
@@ -360,7 +385,7 @@ add2:
   <code>LANGUAGE.md</code> (the fact vocabulary),
   <code>OPCODES.md</code> (op table), and
   <code>TODOS.md</code> (status &amp; backlog).
-  &nbsp;<a href="https://github.com/" id="repo2">View the repository →</a></p>
+  &nbsp;<a href="https://github.com/monstercameron/SemanticAssembly" id="repo2">View the repository →</a></p>
   <p class="small">Built and verified end-to-end on emulated RISC-V.</p>
 </div></footer>
 

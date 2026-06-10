@@ -1,0 +1,788 @@
+# Arduino-style digital I/O over a memory-mapped GPIO block (FE310 map).
+#   pinModeOutput(gpio, pin)        gpio[OUTPUT_EN]  |= 1<<pin
+#   digitalWrite(gpio, pin, level)  gpio[OUTPUT_VAL] |= / &= ~(1<<pin)
+#   digitalRead(gpio, pin)          (gpio[INPUT_VAL] >> pin) & 1
+#   blink(gpio, pin, count)         count x (high, delay, low, delay); returns 2*count
+#
+# Register offsets: input_val@0  input_en@4  output_en@8  output_val@12.
+#
+# What the facts add that raw .s cannot say:
+#   * every register access names `memory region gpioRegisters` whose kind is
+#     DEVICE and which is VOLATILE — so no load is redundant, no store is dead,
+#     and reordering is a contract violation, not an optimization;
+#   * the RMW sequences (load image, mask, store back) are the classic way to
+#     corrupt OTHER pins with a stale image — the access facts pin each step;
+#   * blink threads three values across two calls per iteration — the survival
+#     plan (s0/s1/s2/s3) is written down and checked, not remembered.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+gpioRegisters is memoryRegion
+gpioRegisters kind device
+gpioRegisters volatile yes
+gpioRegisters aliases none
+
+# ---- values shared across the TU (one namespace; same meaning everywhere) ----
+
+gpioBase is value
+gpioBase type Address
+gpioBase meaning "mapped base of the GPIO register block (RPi-style mmap parameter)"
+
+pinNumber is value
+pinNumber type Int64
+pinNumber signed yes
+pinNumber meaning "which pin (bit index into the 32-bit registers)"
+
+pinLevel is value
+pinLevel type Int64
+pinLevel signed yes
+pinLevel meaning "digitalWrite level: 0 = LOW, nonzero = HIGH"
+
+pinState is value
+pinState type Int64
+pinState signed yes
+pinState meaning "digitalRead result: the pin's input bit"
+
+blinkCount is value
+blinkCount type Int64
+blinkCount signed yes
+blinkCount meaning "how many on/off cycles blink performs; survives every call"
+
+blinkIndex is value
+blinkIndex type Int64
+blinkIndex signed yes
+blinkIndex meaning "loop counter; survives every call in s3"
+
+delayRemaining is value
+delayRemaining type Int64
+delayRemaining signed yes
+delayRemaining meaning "busy-wait countdown; loop-carried across the spin back-edge"
+
+toggleCount is value
+toggleCount type Int64
+toggleCount meaning "blink's result: number of digitalWrite calls made (2*count)"
+
+# ============================ pinModeOutput ============================
+
+PinModeOutput is function
+PinModeOutput symbol pinModeOutput
+PinModeOutput visibility global
+PinModeOutput abi linux.riscv64
+PinModeOutput in gpioBase Address a0
+PinModeOutput in pinNumber Int64 a1
+PinModeOutput effect device.read gpioRegisters
+PinModeOutput effect device.write gpioRegisters
+PinModeOutput leaf yes
+PinModeOutput stack bytes 0
+PinModeOutput purpose "Arduino pinMode(pin, OUTPUT): set the pin's output_en bit, RMW"
+
+ModeEntry is block
+ModeEntry in PinModeOutput
+ModeEntry entry yes
+ModeEntry terminates return
+ModeEntry purpose "load output_en, set the bit, store back"
+
+loadOutputEnable is insn
+loadOutputEnable in ModeEntry
+loadOutputEnable operation LoadWord
+loadOutputEnable destination t0
+loadOutputEnable base a0
+loadOutputEnable offset 8
+loadOutputEnable effect device.read
+loadOutputEnable memory region gpioRegisters
+loadOutputEnable memory volatile yes
+loadOutputEnable reads gpioBase
+loadOutputEnable purpose "current output_en image — must be fresh: other pins live here"
+
+loadModeOne is insn
+loadModeOne in ModeEntry
+loadModeOne operation LoadImmediate
+loadModeOne destination t1
+loadModeOne immediate 1
+loadModeOne purpose "bit seed (adjacent scratch)"
+
+shiftModeMask is insn
+shiftModeMask in ModeEntry
+shiftModeMask operation ShiftLeftLogical
+shiftModeMask destination t1
+shiftModeMask firstSource t1
+shiftModeMask secondSource a1
+shiftModeMask reads pinNumber
+shiftModeMask purpose "mask = 1 << pin"
+
+setEnableBit is insn
+setEnableBit in ModeEntry
+setEnableBit operation Or
+setEnableBit destination t0
+setEnableBit firstSource t0
+setEnableBit secondSource t1
+setEnableBit purpose "set ONLY this pin's bit in the image"
+
+storeOutputEnable is insn
+storeOutputEnable in ModeEntry
+storeOutputEnable operation StoreWord
+storeOutputEnable secondSource t0
+storeOutputEnable base a0
+storeOutputEnable offset 8
+storeOutputEnable effect device.write
+storeOutputEnable memory region gpioRegisters
+storeOutputEnable memory volatile yes
+storeOutputEnable reads gpioBase
+storeOutputEnable purpose "write the image back: the pin is now an output"
+
+returnFromPinMode is insn
+returnFromPinMode in ModeEntry
+returnFromPinMode operation Return
+returnFromPinMode purpose "no result"
+
+# ============================ digitalWrite ============================
+
+DigitalWrite is function
+DigitalWrite symbol digitalWrite
+DigitalWrite visibility global
+DigitalWrite abi linux.riscv64
+DigitalWrite in gpioBase Address a0
+DigitalWrite in pinNumber Int64 a1
+DigitalWrite in pinLevel Int64 a2
+DigitalWrite effect device.read gpioRegisters
+DigitalWrite effect device.write gpioRegisters
+DigitalWrite leaf yes
+DigitalWrite stack bytes 0
+DigitalWrite purpose "Arduino digitalWrite(pin, level): set or clear the output_val bit, RMW"
+
+WriteEntry is block
+WriteEntry in DigitalWrite
+WriteEntry entry yes
+WriteEntry terminates branch
+WriteEntry successor ClearBit
+WriteEntry successor SetBit
+WriteEntry purpose "load output_val, build the mask, dispatch on level"
+
+SetBit is block
+SetBit in DigitalWrite
+SetBit terminates jump
+SetBit predecessor WriteEntry
+SetBit successor StoreValue
+SetBit purpose "HIGH: image |= mask"
+
+ClearBit is block
+ClearBit in DigitalWrite
+ClearBit terminates fallthrough
+ClearBit predecessor WriteEntry
+ClearBit successor StoreValue
+ClearBit purpose "LOW: image &= ~mask"
+
+StoreValue is block
+StoreValue in DigitalWrite
+StoreValue terminates return
+StoreValue predecessor SetBit
+StoreValue predecessor ClearBit
+StoreValue purpose "one store writes the merged image back to the device"
+
+loadOutputValue is insn
+loadOutputValue in WriteEntry
+loadOutputValue operation LoadWord
+loadOutputValue destination t0
+loadOutputValue base a0
+loadOutputValue offset 12
+loadOutputValue effect device.read
+loadOutputValue memory region gpioRegisters
+loadOutputValue memory volatile yes
+loadOutputValue reads gpioBase
+loadOutputValue purpose "current output_val image — fresh read, other pins live here"
+
+loadWriteOne is insn
+loadWriteOne in WriteEntry
+loadWriteOne operation LoadImmediate
+loadWriteOne destination t1
+loadWriteOne immediate 1
+loadWriteOne purpose "bit seed (adjacent scratch)"
+
+shiftWriteMask is insn
+shiftWriteMask in WriteEntry
+shiftWriteMask operation ShiftLeftLogical
+shiftWriteMask destination t1
+shiftWriteMask firstSource t1
+shiftWriteMask secondSource a1
+shiftWriteMask reads pinNumber
+shiftWriteMask purpose "mask = 1 << pin"
+
+dispatchOnLevel is insn
+dispatchOnLevel in WriteEntry
+dispatchOnLevel operation BranchIfZero
+dispatchOnLevel firstSource a2
+dispatchOnLevel target ClearBit
+dispatchOnLevel fallthrough SetBit
+dispatchOnLevel reads pinLevel
+dispatchOnLevel condition "level == 0: clear the bit (LOW); else set it (HIGH)"
+
+orMaskIntoImage is insn
+orMaskIntoImage in SetBit
+orMaskIntoImage operation Or
+orMaskIntoImage destination t0
+orMaskIntoImage firstSource t0
+orMaskIntoImage secondSource t1
+orMaskIntoImage purpose "image |= mask"
+
+jumpToStore is insn
+jumpToStore in SetBit
+jumpToStore operation Jump
+jumpToStore target StoreValue
+jumpToStore purpose "join the single store"
+
+invertMask is insn
+invertMask in ClearBit
+invertMask operation ExclusiveOrImmediate
+invertMask destination t1
+invertMask firstSource t1
+invertMask immediate -1
+invertMask purpose "~mask"
+
+andMaskIntoImage is insn
+andMaskIntoImage in ClearBit
+andMaskIntoImage operation And
+andMaskIntoImage destination t0
+andMaskIntoImage firstSource t0
+andMaskIntoImage secondSource t1
+andMaskIntoImage purpose "image &= ~mask"
+
+storeOutputValue is insn
+storeOutputValue in StoreValue
+storeOutputValue operation StoreWord
+storeOutputValue secondSource t0
+storeOutputValue base a0
+storeOutputValue offset 12
+storeOutputValue effect device.write
+storeOutputValue memory region gpioRegisters
+storeOutputValue memory volatile yes
+storeOutputValue reads gpioBase
+storeOutputValue purpose "the pin changes HERE — exactly one device write per call"
+
+returnFromWrite is insn
+returnFromWrite in StoreValue
+returnFromWrite operation Return
+returnFromWrite purpose "no result"
+
+# ============================ digitalRead ============================
+
+DigitalRead is function
+DigitalRead symbol digitalRead
+DigitalRead visibility global
+DigitalRead abi linux.riscv64
+DigitalRead in gpioBase Address a0
+DigitalRead in pinNumber Int64 a1
+DigitalRead out pinState Int64 a0
+DigitalRead effect device.read gpioRegisters
+DigitalRead leaf yes
+DigitalRead stack bytes 0
+DigitalRead purpose "Arduino digitalRead(pin): the pin's input bit, 0 or 1"
+
+ReadEntry is block
+ReadEntry in DigitalRead
+ReadEntry entry yes
+ReadEntry terminates return
+ReadEntry purpose "read input_val, shift the pin's bit down, isolate it"
+
+loadInputValue is insn
+loadInputValue in ReadEntry
+loadInputValue operation LoadWord
+loadInputValue destination t0
+loadInputValue base a0
+loadInputValue offset 0
+loadInputValue effect device.read
+loadInputValue memory region gpioRegisters
+loadInputValue memory volatile yes
+loadInputValue reads gpioBase
+loadInputValue purpose "input_val — volatile: the hardware decides this value"
+
+shiftPinDown is insn
+shiftPinDown in ReadEntry
+shiftPinDown operation ShiftRightLogical
+shiftPinDown destination t0
+shiftPinDown firstSource t0
+shiftPinDown secondSource a1
+shiftPinDown reads pinNumber
+shiftPinDown purpose "bring the pin's bit to position 0"
+
+isolateBit is insn
+isolateBit in ReadEntry
+isolateBit operation AndImmediate
+isolateBit destination a0
+isolateBit firstSource t0
+isolateBit immediate 1
+isolateBit writes pinState
+isolateBit purpose "pinState = bit & 1, into the return register"
+
+returnPinState is insn
+returnPinState in ReadEntry
+returnPinState operation Return
+returnPinState returns pinState
+returnPinState purpose "0 or 1 in a0"
+
+# ============================ blink ============================
+
+Blink is function
+Blink symbol blink
+Blink visibility global
+Blink abi linux.riscv64
+Blink in gpioBase Address a0
+Blink in pinNumber Int64 a1
+Blink in blinkCount Int64 a2
+Blink out toggleCount Int64 a0
+Blink effect call
+Blink leaf no
+Blink calls digitalWrite
+Blink stack bytes 48
+Blink stack align 16
+Blink preserves returnAddress
+Blink preserves s0
+Blink preserves s1
+Blink preserves s2
+Blink preserves s3
+Blink purpose "count x (HIGH, delay, LOW, delay); the Arduino blink sketch as a callee"
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Blink
+SlotReturnAddress offset 40
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Blink
+SlotSavedS0 offset 32
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+SlotSavedS1 is stackSlot
+SlotSavedS1 in Blink
+SlotSavedS1 offset 24
+SlotSavedS1 type Int64
+SlotSavedS1 role savedRegister
+SlotSavedS1 stores s1
+
+SlotSavedS2 is stackSlot
+SlotSavedS2 in Blink
+SlotSavedS2 offset 16
+SlotSavedS2 type Int64
+SlotSavedS2 role savedRegister
+SlotSavedS2 stores s2
+
+SlotSavedS3 is stackSlot
+SlotSavedS3 in Blink
+SlotSavedS3 offset 8
+SlotSavedS3 type Int64
+SlotSavedS3 role savedRegister
+SlotSavedS3 stores s3
+
+BlinkPrologue is block
+BlinkPrologue in Blink
+BlinkPrologue entry yes
+BlinkPrologue terminates fallthrough
+BlinkPrologue successor BlinkCheck
+BlinkPrologue purpose "frame, saves, park gpio/pin/count in s0/s1/s2, index = 0 in s3"
+
+BlinkCheck is block
+BlinkCheck in Blink
+BlinkCheck terminates branch
+BlinkCheck predecessor BlinkPrologue
+BlinkCheck predecessor BlinkAdvance
+BlinkCheck successor BlinkDone
+BlinkCheck successor BlinkBody
+BlinkCheck loop header
+BlinkCheck purpose "loop guard: index < count"
+
+BlinkBody is block
+BlinkBody in Blink
+BlinkBody terminates fallthrough
+BlinkBody predecessor BlinkCheck
+BlinkBody successor DelayHigh
+BlinkBody loop body
+BlinkBody purpose "digitalWrite(pin, HIGH), then arm the spin delay"
+
+DelayHigh is block
+DelayHigh in Blink
+DelayHigh terminates branch
+DelayHigh predecessor BlinkBody
+DelayHigh predecessor DelayHigh
+DelayHigh successor DelayHigh
+DelayHigh successor LowPhase
+DelayHigh loop body
+DelayHigh purpose "busy-wait: the LED stays visibly on"
+
+LowPhase is block
+LowPhase in Blink
+LowPhase terminates fallthrough
+LowPhase predecessor DelayHigh
+LowPhase successor DelayLow
+LowPhase loop body
+LowPhase purpose "digitalWrite(pin, LOW), then arm the second spin delay"
+
+DelayLow is block
+DelayLow in Blink
+DelayLow terminates branch
+DelayLow predecessor LowPhase
+DelayLow predecessor DelayLow
+DelayLow successor DelayLow
+DelayLow successor BlinkAdvance
+DelayLow loop body
+DelayLow purpose "busy-wait: the LED stays visibly off"
+
+BlinkAdvance is block
+BlinkAdvance in Blink
+BlinkAdvance terminates jump
+BlinkAdvance predecessor DelayLow
+BlinkAdvance successor BlinkCheck
+BlinkAdvance loop body
+BlinkAdvance backEdgeTo BlinkCheck
+BlinkAdvance purpose "index++, next cycle"
+
+BlinkDone is block
+BlinkDone in Blink
+BlinkDone terminates return
+BlinkDone predecessor BlinkCheck
+BlinkDone purpose "result = 2*count; restore, free, return"
+
+allocateBlinkFrame is insn
+allocateBlinkFrame in BlinkPrologue
+allocateBlinkFrame operation AddImmediate
+allocateBlinkFrame destination stackPointer
+allocateBlinkFrame firstSource stackPointer
+allocateBlinkFrame immediate -48
+allocateBlinkFrame effect stack.allocate
+allocateBlinkFrame purpose "48-byte frame: ra + s0..s3"
+
+saveBlinkReturnAddress is insn
+saveBlinkReturnAddress in BlinkPrologue
+saveBlinkReturnAddress operation StoreDoubleword
+saveBlinkReturnAddress secondSource returnAddress
+saveBlinkReturnAddress base stackPointer
+saveBlinkReturnAddress offset SlotReturnAddress
+saveBlinkReturnAddress effect memory.write
+saveBlinkReturnAddress memory region stackFrame
+saveBlinkReturnAddress saves returnAddress SlotReturnAddress
+saveBlinkReturnAddress purpose "every Call clobbers returnAddress"
+
+saveBlinkS0 is insn
+saveBlinkS0 in BlinkPrologue
+saveBlinkS0 operation StoreDoubleword
+saveBlinkS0 secondSource s0
+saveBlinkS0 base stackPointer
+saveBlinkS0 offset SlotSavedS0
+saveBlinkS0 effect memory.write
+saveBlinkS0 memory region stackFrame
+saveBlinkS0 saves s0 SlotSavedS0
+saveBlinkS0 purpose "preserve caller's s0 before it carries gpioBase"
+
+saveBlinkS1 is insn
+saveBlinkS1 in BlinkPrologue
+saveBlinkS1 operation StoreDoubleword
+saveBlinkS1 secondSource s1
+saveBlinkS1 base stackPointer
+saveBlinkS1 offset SlotSavedS1
+saveBlinkS1 effect memory.write
+saveBlinkS1 memory region stackFrame
+saveBlinkS1 saves s1 SlotSavedS1
+saveBlinkS1 purpose "preserve caller's s1 before it carries pinNumber"
+
+saveBlinkS2 is insn
+saveBlinkS2 in BlinkPrologue
+saveBlinkS2 operation StoreDoubleword
+saveBlinkS2 secondSource s2
+saveBlinkS2 base stackPointer
+saveBlinkS2 offset SlotSavedS2
+saveBlinkS2 effect memory.write
+saveBlinkS2 memory region stackFrame
+saveBlinkS2 saves s2 SlotSavedS2
+saveBlinkS2 purpose "preserve caller's s2 before it carries blinkCount"
+
+saveBlinkS3 is insn
+saveBlinkS3 in BlinkPrologue
+saveBlinkS3 operation StoreDoubleword
+saveBlinkS3 secondSource s3
+saveBlinkS3 base stackPointer
+saveBlinkS3 offset SlotSavedS3
+saveBlinkS3 effect memory.write
+saveBlinkS3 memory region stackFrame
+saveBlinkS3 saves s3 SlotSavedS3
+saveBlinkS3 purpose "preserve caller's s3 before it carries blinkIndex"
+
+parkGpioBase is insn
+parkGpioBase in BlinkPrologue
+parkGpioBase operation Move
+parkGpioBase destination s0
+parkGpioBase firstSource a0
+parkGpioBase reads gpioBase
+parkGpioBase writes gpioBase
+parkGpioBase purpose "gpioBase -> s0: must survive every digitalWrite call"
+
+parkPinNumber is insn
+parkPinNumber in BlinkPrologue
+parkPinNumber operation Move
+parkPinNumber destination s1
+parkPinNumber firstSource a1
+parkPinNumber reads pinNumber
+parkPinNumber writes pinNumber
+parkPinNumber purpose "pinNumber -> s1: must survive every call"
+
+parkBlinkCount is insn
+parkBlinkCount in BlinkPrologue
+parkBlinkCount operation Move
+parkBlinkCount destination s2
+parkBlinkCount firstSource a2
+parkBlinkCount reads blinkCount
+parkBlinkCount writes blinkCount
+parkBlinkCount purpose "blinkCount -> s2: needed by the guard and the result"
+
+initializeBlinkIndex is insn
+initializeBlinkIndex in BlinkPrologue
+initializeBlinkIndex operation LoadImmediate
+initializeBlinkIndex destination s3
+initializeBlinkIndex immediate 0
+initializeBlinkIndex writes blinkIndex
+initializeBlinkIndex purpose "index = 0, in a callee-saved home"
+
+blinkGuard is insn
+blinkGuard in BlinkCheck
+blinkGuard operation BranchGreaterOrEqual
+blinkGuard firstSource s3
+blinkGuard secondSource s2
+blinkGuard target BlinkDone
+blinkGuard fallthrough BlinkBody
+blinkGuard reads blinkIndex
+blinkGuard reads blinkCount
+blinkGuard condition "index >= count: blinking finished"
+
+argGpioHigh is insn
+argGpioHigh in BlinkBody
+argGpioHigh operation Move
+argGpioHigh destination a0
+argGpioHigh firstSource s0
+argGpioHigh reads gpioBase
+argGpioHigh purpose "first argument: gpio base"
+
+argPinHigh is insn
+argPinHigh in BlinkBody
+argPinHigh operation Move
+argPinHigh destination a1
+argPinHigh firstSource s1
+argPinHigh reads pinNumber
+argPinHigh purpose "second argument: pin"
+
+argLevelHigh is insn
+argLevelHigh in BlinkBody
+argLevelHigh operation LoadImmediate
+argLevelHigh destination a2
+argLevelHigh immediate 1
+argLevelHigh writes pinLevel
+argLevelHigh purpose "third argument: HIGH"
+
+callWriteHigh is insn
+callWriteHigh in BlinkBody
+callWriteHigh operation Call
+callWriteHigh symbol digitalWrite
+callWriteHigh effect call
+callWriteHigh liveOut s0:gpioBase
+callWriteHigh liveOut s1:pinNumber
+callWriteHigh liveOut s2:blinkCount
+callWriteHigh liveOut s3:blinkIndex
+callWriteHigh purpose "LED on; all four loop values ride out the call in s0..s3"
+
+armDelayHigh is insn
+armDelayHigh in BlinkBody
+armDelayHigh operation LoadImmediate
+armDelayHigh destination t0
+armDelayHigh immediate 2000
+armDelayHigh writes delayRemaining
+armDelayHigh purpose "arm the on-phase busy-wait"
+
+spinDownHigh is insn
+spinDownHigh in DelayHigh
+spinDownHigh operation AddImmediate
+spinDownHigh destination t0
+spinDownHigh firstSource t0
+spinDownHigh immediate -1
+spinDownHigh reads delayRemaining
+spinDownHigh writes delayRemaining
+spinDownHigh purpose "count down"
+
+spinBranchHigh is insn
+spinBranchHigh in DelayHigh
+spinBranchHigh operation BranchIfNonzero
+spinBranchHigh firstSource t0
+spinBranchHigh target DelayHigh
+spinBranchHigh fallthrough LowPhase
+spinBranchHigh reads delayRemaining
+spinBranchHigh liveOut t0:delayRemaining
+spinBranchHigh condition "keep spinning until the countdown hits zero"
+
+argGpioLow is insn
+argGpioLow in LowPhase
+argGpioLow operation Move
+argGpioLow destination a0
+argGpioLow firstSource s0
+argGpioLow reads gpioBase
+argGpioLow purpose "first argument: gpio base"
+
+argPinLow is insn
+argPinLow in LowPhase
+argPinLow operation Move
+argPinLow destination a1
+argPinLow firstSource s1
+argPinLow reads pinNumber
+argPinLow purpose "second argument: pin"
+
+argLevelLow is insn
+argLevelLow in LowPhase
+argLevelLow operation LoadImmediate
+argLevelLow destination a2
+argLevelLow immediate 0
+argLevelLow writes pinLevel
+argLevelLow purpose "third argument: LOW"
+
+callWriteLow is insn
+callWriteLow in LowPhase
+callWriteLow operation Call
+callWriteLow symbol digitalWrite
+callWriteLow effect call
+callWriteLow liveOut s0:gpioBase
+callWriteLow liveOut s1:pinNumber
+callWriteLow liveOut s2:blinkCount
+callWriteLow liveOut s3:blinkIndex
+callWriteLow purpose "LED off; the same four values ride out this call too"
+
+armDelayLow is insn
+armDelayLow in LowPhase
+armDelayLow operation LoadImmediate
+armDelayLow destination t0
+armDelayLow immediate 2000
+armDelayLow writes delayRemaining
+armDelayLow purpose "arm the off-phase busy-wait"
+
+spinDownLow is insn
+spinDownLow in DelayLow
+spinDownLow operation AddImmediate
+spinDownLow destination t0
+spinDownLow firstSource t0
+spinDownLow immediate -1
+spinDownLow reads delayRemaining
+spinDownLow writes delayRemaining
+spinDownLow purpose "count down"
+
+spinBranchLow is insn
+spinBranchLow in DelayLow
+spinBranchLow operation BranchIfNonzero
+spinBranchLow firstSource t0
+spinBranchLow target DelayLow
+spinBranchLow fallthrough BlinkAdvance
+spinBranchLow reads delayRemaining
+spinBranchLow liveOut t0:delayRemaining
+spinBranchLow condition "keep spinning until the countdown hits zero"
+
+advanceBlinkIndex is insn
+advanceBlinkIndex in BlinkAdvance
+advanceBlinkIndex operation AddImmediate
+advanceBlinkIndex destination s3
+advanceBlinkIndex firstSource s3
+advanceBlinkIndex immediate 1
+advanceBlinkIndex reads blinkIndex
+advanceBlinkIndex writes blinkIndex
+advanceBlinkIndex purpose "index++"
+
+blinkBackEdge is insn
+blinkBackEdge in BlinkAdvance
+blinkBackEdge operation Jump
+blinkBackEdge target BlinkCheck
+blinkBackEdge liveOut s0:gpioBase
+blinkBackEdge liveOut s1:pinNumber
+blinkBackEdge liveOut s2:blinkCount
+blinkBackEdge liveOut s3:blinkIndex
+blinkBackEdge purpose "loop-carried: all four values survive into the next cycle"
+
+computeToggleCount is insn
+computeToggleCount in BlinkDone
+computeToggleCount operation ShiftLeftLogicalImmediate
+computeToggleCount destination a0
+computeToggleCount firstSource s2
+computeToggleCount immediate 1
+computeToggleCount reads blinkCount
+computeToggleCount writes toggleCount
+computeToggleCount purpose "result = count * 2 (one HIGH + one LOW per cycle)"
+
+restoreBlinkReturnAddress is insn
+restoreBlinkReturnAddress in BlinkDone
+restoreBlinkReturnAddress operation LoadDoubleword
+restoreBlinkReturnAddress destination returnAddress
+restoreBlinkReturnAddress base stackPointer
+restoreBlinkReturnAddress offset SlotReturnAddress
+restoreBlinkReturnAddress effect memory.read
+restoreBlinkReturnAddress memory region stackFrame
+restoreBlinkReturnAddress restores returnAddress SlotReturnAddress
+restoreBlinkReturnAddress purpose "restore return address"
+
+restoreBlinkS0 is insn
+restoreBlinkS0 in BlinkDone
+restoreBlinkS0 operation LoadDoubleword
+restoreBlinkS0 destination s0
+restoreBlinkS0 base stackPointer
+restoreBlinkS0 offset SlotSavedS0
+restoreBlinkS0 effect memory.read
+restoreBlinkS0 memory region stackFrame
+restoreBlinkS0 restores s0 SlotSavedS0
+restoreBlinkS0 purpose "restore caller's s0"
+
+restoreBlinkS1 is insn
+restoreBlinkS1 in BlinkDone
+restoreBlinkS1 operation LoadDoubleword
+restoreBlinkS1 destination s1
+restoreBlinkS1 base stackPointer
+restoreBlinkS1 offset SlotSavedS1
+restoreBlinkS1 effect memory.read
+restoreBlinkS1 memory region stackFrame
+restoreBlinkS1 restores s1 SlotSavedS1
+restoreBlinkS1 purpose "restore caller's s1"
+
+restoreBlinkS2 is insn
+restoreBlinkS2 in BlinkDone
+restoreBlinkS2 operation LoadDoubleword
+restoreBlinkS2 destination s2
+restoreBlinkS2 base stackPointer
+restoreBlinkS2 offset SlotSavedS2
+restoreBlinkS2 effect memory.read
+restoreBlinkS2 memory region stackFrame
+restoreBlinkS2 restores s2 SlotSavedS2
+restoreBlinkS2 purpose "restore caller's s2"
+
+restoreBlinkS3 is insn
+restoreBlinkS3 in BlinkDone
+restoreBlinkS3 operation LoadDoubleword
+restoreBlinkS3 destination s3
+restoreBlinkS3 base stackPointer
+restoreBlinkS3 offset SlotSavedS3
+restoreBlinkS3 effect memory.read
+restoreBlinkS3 memory region stackFrame
+restoreBlinkS3 restores s3 SlotSavedS3
+restoreBlinkS3 purpose "restore caller's s3"
+
+freeBlinkFrame is insn
+freeBlinkFrame in BlinkDone
+freeBlinkFrame operation AddImmediate
+freeBlinkFrame destination stackPointer
+freeBlinkFrame firstSource stackPointer
+freeBlinkFrame immediate 48
+freeBlinkFrame effect stack.free
+freeBlinkFrame purpose "free the frame"
+
+returnToggleCount is insn
+returnToggleCount in BlinkDone
+returnToggleCount operation Return
+returnToggleCount returns toggleCount
+returnToggleCount purpose "2*count in a0"

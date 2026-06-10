@@ -27,6 +27,8 @@ run fib       0 testing/harness/fib.c       examples/brainworms_fib/fib.s
 run ackermann 0 testing/harness/ackermann.c examples/gauntlet_ackermann/ackermann.s
 run quicksort 0 testing/harness/quicksort.c examples/gauntlet_quicksort/quicksort.s
 run revlist   0 testing/harness/revlist.c   examples/gauntlet_revlist/revlist.s
+run device_gpio  0 testing/harness/device_gpio.c  examples/device_gpio/gpio.s
+run device_motor 0 testing/harness/device_motor.c examples/device_motor/motor.s
 
 echo "== behavioral tests, standalone _start programs =="
 # freestanding (no libc): build with -nostdlib, check stdout + exit code

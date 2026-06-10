@@ -8,6 +8,10 @@ prog xlen 64
 prog abi linux.riscv64.syscall
 prog entry _start
 
+messageData is memoryRegion
+messageData kind readonly
+messageData aliases none
+
 stdoutMessage is data
 stdoutMessage section rodata
 stdoutMessage type Bytes
@@ -65,7 +69,7 @@ doWrite arg fd a0
 doWrite arg buffer a1
 doWrite arg length a2
 doWrite effect syscall.write
-doWrite memory region stdoutMessage
+doWrite memory region messageData
 doWrite purpose "write(1, &stdoutMessage, 30)"
 
 setExitSyscall is insn

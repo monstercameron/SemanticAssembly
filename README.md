@@ -106,9 +106,20 @@ Pure Python 3, **no dependencies**.
 $ python -m sasm emit  <file.sasm>             # print emitted .s
 $ python -m sasm build <file.sasm> -o out.s    # emit to a file (refuses on errors)
 $ python -m sasm check <file.sasm>             # validate, print diagnostics
+$ python -m sasm exec  <file.sasm> fib 10 --expect 55 --coverage
+                                               # run it in the taint interpreter:
+                                               # facts checked DYNAMICALLY (R-*)
 $ python -m sasm fmt   <file.sasm> [-i]        # canonical-format
 $ python -m sasm facts <file.sasm> <entity>    # dump every fact about an entity
 ```
+
+`exec` is the dynamic half of the trust story (DESIGN §19): a shadow-tagged
+RV64IM interpreter executes the fact rows and *observes* the semantic facts —
+`reads`/`writes` bindings, `liveOut` across calls, effects, callee-saved
+preservation, frame size — reporting violations as `R-*` diagnostics and
+ending with a coverage report of what the trace did **not** exercise. The
+path-dependent clobber the static may-analysis provably misses is caught here
+concretely.
 
 Optional install (`pip install -e .`) gives a `sasm` command instead of
 `python -m sasm`.
@@ -134,10 +145,12 @@ entity handle at fault — see [`DESIGN.md`](research/DESIGN.md) §14):
 | area | codes |
 |------|-------|
 | ISA / structure | `E-ISA-OPCODE` `E-ISA-REG` `E-ISA-FIELD` `E-REF` `E-IMM-RANGE` `E-ORDER-MIXED` |
-| ABI / contracts | `E-ABI-ALIGN` `E-ABI-PRESERVE` `E-LEAF` `E-EFFECT` `E-TYPE` `W-SLOT` |
-| control flow | `E-CFG-EDGE` |
+| ABI / contracts | `E-ABI-ALIGN` `E-ABI-PRESERVE` `E-LEAF` `E-EFFECT` `E-TYPE` `E-SLOT-RANGE` `E-RESERVED` |
+| stack discipline | `E-STACK-OP` `E-STACK-BALANCE` (sp is an explicit, per-path-proven surface) |
+| control flow / layout | `E-CFG-EDGE` `E-CFG-LAYOUT` `W-UNREACHABLE` |
 | liveness | `E-LIVE-UNDEF` `E-LIVE-RET` `W-DEAD` `W-CLOBBER` |
 | value flow | `E-VALUE-FLOW` `E-DERIVABLE` |
+| smells | `W-LINT` (self-moves, discarded results, decisionless branches) |
 
 For example, the recursive Fibonacci (`examples/brainworms_fib`) deliberately
 moves `number` into a callee-saved register so it survives two calls. Break that —
@@ -237,6 +250,8 @@ Each is a triptych: `*.c` (source) · `*.sasm` (semantic) · `*.s` (emitted, gol
 | `gauntlet_ackermann` | **nested recursion** — `ack(m-1, ack(m, n-1))`, call-result binding, 3-way dispatch CFG; `ack(3,3)` = 2432 calls |
 | `gauntlet_quicksort` | **two recursions + mutating partition loop** — 8-block CFG, three values riding a call in `s0`/`s1`/`s2` |
 | `gauntlet_revlist` | **pointer rotation** — in-place list reversal where row order is the algorithm; two functions, one TU |
+| `device_gpio` | **Arduino-style LED I/O** — `pinMode`/`digitalWrite`/`digitalRead`/`blink` over an mmap-style GPIO base; `kind device` + `volatile` regions, RMW bit ops |
+| `device_motor` | **motor control** — PWM duty (`analogWrite`), sign-driven H-bridge direction, table-driven 4-phase stepper; readonly + device regions in one loop |
 
 ## Testing
 
@@ -261,7 +276,10 @@ $ bash eval.sh               # all three (behavioral tier auto-skips without qem
 
 The behavioral tier compiles each example for `riscv64` and runs it under
 `qemu-riscv64`, asserting real results: `add2(2,3)=5`, `sum_array([1..5])=15`,
-`fib(10)=55`, and `hello` prints its message and exits 0. Two Dockerfiles:
+`fib(10)=55`, `ack(3,3)=61` (2432 recursive calls), quicksort over four arrays
+(duplicates, sorted, reverse, single), a list-reversal round-trip with
+order-sensitive checksums, `hello` prints and exits 0, `sum_of_squares` prints
+`385`, and `data_demo`/`linked` exit `42`. Two Dockerfiles:
 top-level `Dockerfile` is the self-contained whole-suite image;
 `testing/Dockerfile` is the leaner behavioral-only image used by `testing/run.sh`.
 
@@ -276,8 +294,8 @@ sasm/              the toolchain (pure Python)
   cli.py           emit | build | check | facts
   optable.tsv      semantic ops (source of truth)
   regs.tsv abi.tsv formats.tsv extmap.tsv syscalls.tsv csr.tsv
-examples/          four C / sasm / s triptychs
-tests/             snapshot (compiler) + check (validator)
+examples/          thirteen C / sasm / s triptychs (gauntlet + device sets)
+tests/             snapshot (compiler) + check (validator) + regressions
 testing/           behavioral harness (testing/Dockerfile + qemu)
 docs/              project webpage (index.html, for GitHub Pages)
 Dockerfile         self-contained eval image (runs eval.sh)
@@ -288,16 +306,21 @@ research/          all the docs (every .md except this README)
   OPCODES.md       rendered semantic op reference
   TODOS.md         implicit-state → explicit-fact backlog / status
   examples.md      guide to the example triptychs
-  testing.md       the two-tier test harness
+  testing.md       the three-tier test harness
   docs.md          how to view / publish the webpage
 ```
 
 ## Status
 
 Working today: the **compiler** (RV64 "Tier A": RV64I + M + Zicond + scalar
-atomics) emits byte-identical, assembling, *executing* RISC-V; the **validator**
-implements the original 19-code catalog with zero false positives on the
-examples. All proven on emulated RISC-V.
+atomics) emits byte-identical, assembling, *executing* RISC-V across thirteen
+examples; the **validator** implements the entire enforced set of the DESIGN §14
+catalog — 26 codes, from `E-CFG-LAYOUT` to the every-surface set (`E-RESERVED`, `E-STACK-OP`/`E-STACK-BALANCE`, `W-LINT`) — with zero
+false positives on the examples; the **taint interpreter** (`sasm exec`) checks
+the semantic facts dynamically (the `R-*` runtime catalog, DESIGN §19.2); and
+the **mutation tier** fuzzes the verifier itself — 75 mutants, every
+behavior-changing one caught statically or dynamically, and its first run found
+and fixed a real hole (`E-SLOT-RANGE`). All proven on emulated RISC-V.
 
 Honestly not done yet: a 2026-06 edge-case audit specified five further
 diagnostic codes (TODOS A3); the gauntlet shakedown then landed the sharpest
@@ -305,11 +328,11 @@ one — `E-CFG-LAYOUT` (block-layout adjacency, rows after a terminator,
 noreturn-syscall terminators) plus the `terminates` cross-check and the
 call-result binding rule — leaving duplicate facts, data contracts, ordinal
 sanity, and extension gating still ◌ (unenforced); until each lands, the facts
-it would guard must be read as intent (LANGUAGE §10.5). Also outstanding: the general `E-DERIVABLE`
-reachability linter; broader ISA coverage (Tiers B/V/P, planned via the official
-`riscv/riscv-opcodes` generator); and a couple of compiler edges the examples
-don't yet exercise (the compact pipe sugar, `ordinal` ordering). See
-[`TODOS.md`](research/TODOS.md).
+it would guard must be read as intent (LANGUAGE §10.5). Also outstanding: the
+general `E-DERIVABLE` reachability linter; broader ISA coverage (Tiers B/V/P,
+planned via the official `riscv/riscv-opcodes` generator); and the runtime
+debugging design (DESIGN §18), which stays design-only until the premise
+benchmark runs. See [`TODOS.md`](research/TODOS.md).
 
 ## Design docs
 

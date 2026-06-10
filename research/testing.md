@@ -1,13 +1,19 @@
 # Testing
 
-Three tiers. The first two test the *toolchain* (DESIGN §15 round-trip honesty);
-the third tests the *premise* — they are different kinds of evidence and neither
-substitutes for the other.
+Five tiers. 0–2 test the *toolchain*, 3 tests the *verifier itself*, 4 tests
+the *premise* — different kinds of evidence; none substitutes for another.
 
+0. **Facts (dynamic)** — `sasm exec`: the taint interpreter (DESIGN §19.2) runs
+   the fact rows in-process, checks the semantic facts on the trace (`R-*`
+   codes), and reports coverage. No Docker, no toolchain, milliseconds.
+   (`tests/test_interp.py`)
 1. **Validity** — does the `.s` assemble as real RISC-V? (catches every emitter
    syntax/operand/encoding bug)
 2. **Behavior** — does the binary compute the right answer? (run under qemu)
-3. **Premise** — do agents actually understand / edit / trace `.sasm` better
+3. **Mutation** — fuzz the verifier (DESIGN §19.3): every behavior-changing
+   mutant of a known-good example must be caught statically or dynamically;
+   uncaught non-equivalent mutants fail the build. (`tests/test_mutation.py`)
+4. **Premise** — do agents actually understand / edit / trace `.sasm` better
    than `.s`? (the DESIGN §16.1 benchmark — see below; not yet implemented)
 
 ## What's installed where
@@ -29,19 +35,22 @@ bash testing/run.sh
 ```
 
 This builds the `sasm-riscv-test` image once, then runs `testing/intest.sh`
-inside it with the repo bind-mounted at `/work`. For each example it compiles a C
-harness (`testing/harness/<name>.c`) against the function's `.s`, statically links
-with the cross-gcc, runs under `qemu-riscv64-static`, and asserts the result via
-the process exit code. It also re-assembles every `examples/*/*.s` as a Tier-1
-check.
+inside it with the repo bind-mounted at `/work`. For each function example it
+compiles a C harness (`testing/harness/<name>.c`) against the function's `.s`,
+statically links with the cross-gcc, runs under `qemu-riscv64-static`, and
+asserts the result via the process exit code; `_start` programs are built
+`-nostdlib` and checked on stdout/exit code; the `linked/` pair is linked
+cross-TU. It also re-assembles every `examples/*/*.s` as a Tier-1 check.
 
-Expected:
+Expected (abridged):
 ```
-add2(2, 3) = 5            PASS
-sum_array([1..5]) = 15    PASS
-fib(10) = 55              PASS
-ASM OK  (all three .s)
+PASS  add2 · sum_array · fib · ackermann · quicksort · revlist
+PASS  hello · sum_of_squares · data_demo (exit 42) · linked (exit 42)
+ASM OK  (all thirteen .s)
 ```
+The gauntlet harnesses assert real behavior: `ack(3,3)=61` through 2432
+recursive frames, quicksort over duplicate/sorted/reverse/single arrays, and a
+list-reversal round-trip with order-sensitive checksums.
 
 ## How it plugs into the compiler (later)
 
@@ -61,9 +70,9 @@ the freshly emitted file (same `intest.sh`, swap the `.s` path).
 - `intest.sh` — in-container suite (build + run + assert; also Tier-1 assemble)
 - `harness/*.c` — one tiny C `main` per example; returns 0 on correct result
 
-## Tier 3 — the premise benchmark (planned; DESIGN §16.1, TODOS D1)
+## Tier 4 — the premise benchmark (planned; DESIGN §16.1, TODOS D1)
 
-Tiers 1–2 prove the toolchain is honest; they say nothing about whether the
+Tiers 0–3 prove the toolchain and verifier are honest; they say nothing about whether the
 format helps an agent. That claim is tested by the §16.1 benchmark, summarized
 here so the harness work has a fixed target:
 
@@ -83,6 +92,6 @@ here so the harness work has a fixed target:
 The Tier-2 qemu harness doubles as the benchmark's behavioral oracle: a candidate
 edit passes iff its lowered `.s` assembles and the harness exits green.
 
-(Designed but gated behind Tier 3's result: the runtime debug API — DESIGN §18,
+(Designed but gated behind Tier 4's result: the real-binary debug API — DESIGN §18,
 TODOS G — reuses this same qemu plumbing via the gdb stub to run trace-scoped
 contract checks; it is not part of any test tier until the gate lifts.)

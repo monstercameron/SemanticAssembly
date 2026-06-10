@@ -182,6 +182,125 @@ def _fn_insns(prog, fn):
         yield from prog.members_of(blk.name, "insn")
 
 
+def _check_lint(prog, fn, ops, abi, add) -> None:
+    """E-RESERVED + W-LINT (DESIGN §14): legal-but-never-intended shapes that
+    raw assembly permits silently. These need NO declared context — they are
+    derived from A-facts and the ABI tables alone."""
+    abikey = fn.scalar("abi") or "linux.riscv64"
+    reserved = set(abi.get(abikey, {}).get("reserved", []))
+    for blk in prog.members_of(fn.name, "block"):
+        for i in prog.members_of(blk.name, "insn"):
+            spec = ops.get(i.scalar("operation"))
+            if not spec:
+                continue
+            for d in _role_regs(i, spec["defines"]):
+                if d in reserved:
+                    add("error", "E-RESERVED", i.name,
+                        f"writes {d}, which the platform ABI reserves "
+                        f"(abi.tsv `reserved`) — the runtime owns it")
+            if spec["sem"] == "Move" \
+                    and i.scalar("destination") == i.scalar("firstSource"):
+                add("warning", "W-LINT", i.name,
+                    "self-move: destination equals source — a no-op")
+            if i.scalar("destination") == "zero" and spec["sem"] != "NoOperation":
+                add("warning", "W-LINT", i.name,
+                    "result written to `zero` is discarded — use NoOperation "
+                    "or a real destination")
+            if spec["control"] == "branch":
+                tgt, ft = i.scalar("target"), i.scalar("fallthrough")
+                if tgt and tgt == ft:
+                    add("warning", "W-LINT", i.name,
+                        "branch target equals its fall-through — the branch "
+                        "decides nothing")
+
+
+def _check_stack(prog, fn, ops, syscalls, add) -> None:
+    """E-STACK-OP + E-STACK-BALANCE (DESIGN §14): the stack pointer is an
+    explicit surface. Every sp write must declare `effect stack.allocate` or
+    `stack.free` and be a CONSTANT AddImmediate; a forward pass then proves,
+    per path: balanced frames at every return, consistent depth at merges,
+    16-byte alignment at every call, and that the allocation matches the
+    declared `stack bytes` (closing the A3 prologue cross-check statically)."""
+    blocks = prog.members_of(fn.name, "block")
+    if not blocks:
+        return
+    blocks.sort(key=lambda b: (b.scalar("entry") != "yes", b.order))
+    names = {b.name for b in blocks}
+    declared = next((int(r[1]) for r in fn.all("stack")
+                     if len(r) >= 2 and r[0] == "bytes" and _is_int(r[1])), None)
+
+    def sp_delta(i, spec) -> int | None:
+        """delta this row applies to sp, or None if sp untouched."""
+        if "stackPointer" not in _role_regs(i, spec["defines"]):
+            return None
+        if not any(r and r[0] in ("stack.allocate", "stack.free")
+                   for r in i.all("effect")):
+            add("error", "E-STACK-OP", i.name,
+                "adjusts stackPointer without declaring `effect "
+                "stack.allocate` / `stack.free` — sp is an explicit surface")
+        if spec["sem"] == "AddImmediate" \
+                and i.scalar("firstSource") == "stackPointer" \
+                and _is_int(i.scalar("immediate")):
+            return int(i.scalar("immediate"))
+        add("error", "E-STACK-BALANCE", i.name,
+            "non-constant stackPointer adjustment — v0 frames are constant "
+            "AddImmediate only (dynamic allocation is out of scope)")
+        return 0
+
+    offset_in: dict[str, int] = {blocks[0].name: 0}
+    min_off = 0
+    worklist = [blocks[0].name]
+    blk_by = {b.name: b for b in blocks}
+    seen_merge_err = set()
+    while worklist:
+        bname = worklist.pop()
+        off = offset_in[bname]
+        noreturn = False
+        for i in prog.members_of(bname, "insn"):
+            spec = ops.get(i.scalar("operation"))
+            if not spec:
+                continue
+            if spec["control"] == "call" and off % 16 != 0:
+                add("error", "E-ABI-ALIGN", i.name,
+                    f"call at stack depth {-off}: sp is not 16-byte aligned "
+                    f"on this path")
+            if spec["control"] == "return" and off != 0:
+                add("error", "E-STACK-BALANCE", i.name,
+                    f"returns with stack depth {-off}: the frame is "
+                    f"{'not freed' if off < 0 else 'over-freed'} on this path")
+            if spec["control"] == "syscall":
+                row = syscalls.get(i.scalar("syscall") or "")
+                if row and row.get("return") == "-":
+                    noreturn = True
+            d = sp_delta(i, spec)
+            if d is not None:
+                off += d
+                min_off = min(min_off, off)
+        if noreturn:
+            continue
+        for s in blk_by[bname].values("successor"):
+            if s not in names:
+                continue
+            if s in offset_in:
+                if offset_in[s] != off and (bname, s) not in seen_merge_err:
+                    seen_merge_err.add((bname, s))
+                    add("error", "E-STACK-BALANCE", s,
+                        f"inconsistent stack depth at merge: {-offset_in[s]} "
+                        f"vs {-off} arriving from {bname}")
+            else:
+                offset_in[s] = off
+                worklist.append(s)
+
+    if min_off != 0 and declared is None:
+        add("error", "E-STACK-BALANCE", fn.name,
+            f"moves sp to depth {-min_off} but declares no `stack bytes` — "
+            f"the frame must be an explicit fact")
+    elif declared is not None and declared != 0 and -min_off != declared:
+        add("error", "E-STACK-BALANCE", fn.name,
+            f"declares `stack bytes {declared}` but the deepest sp adjustment "
+            f"is {-min_off}")
+
+
 _TERMINATOR_KINDS = {"branch", "jump", "return", "syscall"}
 
 
@@ -594,6 +713,13 @@ def validate(prog: Program) -> list[Diagnostic]:
     funcs = {e.name for e in prog.of_type("function")}
     value_ent = {e.name: e for e in prog.of_type("value")}
     values = set(value_ent)
+
+    # a declared phi (`mergesFrom`, LANGUAGE §4) must name a declared value
+    for v in value_ent.values():
+        for r in v.all("mergesFrom"):
+            if r and r[0] not in values:
+                add("error", "E-REF", v.name,
+                    f"`mergesFrom {r[0]}` is not a declared value")
     slots = {e.name for e in prog.of_type("stackSlot")}
     regions = {e.name: e.scalar("kind") for e in prog.of_type("memoryRegion")}
 
@@ -625,6 +751,24 @@ def validate(prog: Program) -> list[Diagnostic]:
         if off is not None and not _is_int(off) and off not in slots:
             add("error", "E-REF", insn.name,
                 f"`offset {off}` is neither an integer nor a stackSlot")
+        # effect/memory region qualifiers must resolve to declared regions
+        for r in insn.all("effect"):
+            if len(r) >= 2 and r[0].split(".")[0] in ("memory", "device") \
+                    and r[1] not in regions:
+                add("error", "E-REF", insn.name,
+                    f"`effect {r[0]} {r[1]}` names an undeclared memoryRegion")
+        for r in insn.all("memory"):
+            if len(r) >= 2 and r[0] == "region" and r[1] not in regions:
+                add("error", "E-REF", insn.name,
+                    f"`memory region {r[1]}` is not a declared memoryRegion")
+
+        # `writes` on a row that defines no register binds nothing (grammar rule)
+        if insn.has("writes") and spec["control"] != "call" \
+                and not _role_regs(insn, spec["defines"]):
+            add("error", "E-VALUE-FLOW", insn.name,
+                "`writes` on an operation that defines no register (or "
+                "discards to `zero`) — the binding cannot exist")
+
         for pred in ("reads", "writes", "returns", "requires"):
             for r in insn.all(pred):
                 if not r:
@@ -716,10 +860,23 @@ def validate(prog: Program) -> list[Diagnostic]:
             for slot in prog.members_of(fn.name, "stackSlot"):
                 off = slot.scalar("offset")
                 if _is_int(off) and not (0 <= int(off) < frame):
-                    add("warning", "W-SLOT", slot.name,
-                        f"offset {off} is outside the {frame}-byte frame")
+                    # ERROR, not warning: a slot outside the frame reads/writes
+                    # the CALLER's memory — silent corruption that can pass
+                    # behavioral tests when the victim slot is unused (found by
+                    # the mutation tier, DESIGN §19)
+                    add("error", "E-SLOT-RANGE", slot.name,
+                        f"offset {off} is outside the {frame}-byte frame "
+                        f"(the access lands in the caller's frame)")
+
+        for r in fn.all("effect"):
+            if len(r) >= 2 and r[0].split(".")[0] in ("memory", "device") \
+                    and r[1] not in regions:
+                add("error", "E-REF", fn.name,
+                    f"`effect {r[0]} {r[1]}` names an undeclared memoryRegion")
 
         _check_preserve(prog, fn, ops, abi, add)
+        _check_lint(prog, fn, ops, abi, add)
+        _check_stack(prog, fn, ops, syscalls, add)
         _check_layout(prog, fn, ops, syscalls, add)
         _check_liveness(prog, fn, ops, abi, regs, add)
         _check_backward(prog, fn, ops, abi, add)
