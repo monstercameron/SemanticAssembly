@@ -1,0 +1,76 @@
+{
+  "fib": {
+    "fq1": {
+      "question": "At the instruction `add a0, s1, a0`, which register holds the value fib(number-1), i.e. the first recursive call's result?",
+      "answer": "s1",
+      "accept": ["s1"]
+    },
+    "fq2": {
+      "question": "At which stack offset (decimal bytes from sp) is the caller's s0 saved?",
+      "answer": "16",
+      "accept": ["16", "16(sp)"]
+    },
+    "fq3": {
+      "question": "Immediately after the SECOND `call fib` returns, which register still contains the function's original input value?",
+      "answer": "s0",
+      "accept": ["s0"]
+    },
+    "fq4": {
+      "question": "If the stack frame were grown by exactly 8 bytes (to 40 bytes), would it still satisfy the ABI's 16-byte stack alignment? Answer yes or no.",
+      "answer": "no",
+      "accept": ["no"]
+    },
+    "fq5": {
+      "question": "Of the registers t0, s0, and a0, which single one is guaranteed by the calling convention to be preserved across `call fib`?",
+      "answer": "s0",
+      "accept": ["s0"]
+    },
+    "fq6": {
+      "question": "Consider the instruction `mv s1, a0` between the two calls. If it were deleted (and nothing else changed), which later instruction would compute a wrong result first? Answer with the instruction's mnemonic and operands exactly as written.",
+      "answer": "add a0, s1, a0",
+      "accept": ["add a0, s1, a0", "add a0,s1,a0"]
+    }
+  },
+  "quicksort": {
+    "qq1": {
+      "question": "At the instruction `sd t0, 0(t1)` (the store that writes the displaced element back to array[scan]), which register holds the partition index `boundary` (Lomuto's i)?",
+      "answer": "t3",
+      "accept": ["t3"]
+    },
+    "qq2": {
+      "question": "At which stack offset (decimal bytes from sp) is the caller's s2 saved?",
+      "answer": "0",
+      "accept": ["0", "0(sp)"]
+    },
+    "qq3": {
+      "question": "Immediately after the FIRST `call qsort64` returns, which register holds the array base pointer?",
+      "answer": "s0",
+      "accept": ["s0"]
+    },
+    "qq4": {
+      "question": "Immediately after the SECOND `call qsort64` returns, which register, if any, still holds the pivot's final index? Answer with a register name or `none`.",
+      "answer": "s2",
+      "accept": ["s2"]
+    },
+    "qq5": {
+      "question": "At the loop guard `bge t4, a2, ...`, which register holds the scanning index (Lomuto's j)?",
+      "answer": "t4",
+      "accept": ["t4"]
+    },
+    "qq6": {
+      "question": "Of the registers t2, s1, and a2, which single one is guaranteed by the calling convention to be preserved across the first `call qsort64`?",
+      "answer": "s1",
+      "accept": ["s1"]
+    },
+    "qq7": {
+      "question": "Which register carries `low` (the left bound) into the first recursive call as that call's second argument?",
+      "answer": "a1",
+      "accept": ["a1"]
+    },
+    "qq8": {
+      "question": "Inside the partition loop body (between the loop guard and the back-edge jump), is any value loaded from or stored to the stack frame? Answer yes or no.",
+      "answer": "no",
+      "accept": ["no"]
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "tr1": {
+    "function": "fib",
+    "contract": "the caller's s1 is preserved (restored to its original value) on return",
+    "answer": "3",
+    "edits": [
+      {
+        "b": [["loadConstantTwo destination t0", "loadConstantTwo destination t1"],
+               ["baseCaseBranch secondSource t0", "baseCaseBranch secondSource t1"]],
+        "d": [["li\tt0, 2", "li\tt1, 2"],
+               ["blt\ta0, t0, ", "blt\ta0, t1, "]]
+      },
+      {
+        "b": [["addResults firstSource s1", "addResults firstSource a0"],
+               ["addResults secondSource a0", "addResults secondSource s1"]],
+        "d": [["add\ta0, s1, a0", "add\ta0, a0, s1"]]
+      },
+      {
+        "b": [["restoreCallerS1 offset SlotSavedS1", "restoreCallerS1 offset SlotSavedS0"]],
+        "d": [["ld\ts1, 8(sp)", "ld\ts1, 16(sp)"]]
+      },
+      {
+        "b": [["freeFrame purpose \"Free the frame\"", "freeFrame purpose \"Tear down the frame\""]],
+        "d": [["# Free the frame", "# Tear down the frame"]]
+      }
+    ]
+  },
+  "tr2": {
+    "function": "quicksort",
+    "contract": "the array base pointer survives the first recursive call (so the second recursion sorts the correct array)",
+    "answer": "3",
+    "edits": [
+      {
+        "b": [["computeBoundaryAddress firstSource a0", "computeBoundaryAddress firstSource t0"],
+               ["computeBoundaryAddress secondSource t0", "computeBoundaryAddress secondSource a0"]],
+        "d": [["add\tt6, a0, t0", "add\tt6, t0, a0"]]
+      },
+      {
+        "b": [["computeLeftHigh firstSource t0", "computeLeftHigh firstSource s2"]],
+        "d": [["addi\ta2, t0, -1", "addi\ta2, s2, -1"]]
+      },
+      {
+        "b": [["moveArrayToS0 destination s0", "moveArrayToS0 destination t5"],
+               ["moveArrayBack firstSource s0", "moveArrayBack firstSource t5"]],
+        "d": [["mv\ts0, a0", "mv\tt5, a0"],
+               ["mv\ta0, s0", "mv\ta0, t5"]]
+      },
+      {
+        "b": [["loopBackEdge purpose \"Loop-carried: pivotValue/boundary/scan must survive into the next iteration\"", "loopBackEdge purpose \"The three loop-carried temporaries ride into the next iteration\""]],
+        "d": [["Loop-carried: pivotValue/boundary/scan must survive into the next iteration", "The three loop-carried temporaries ride into the next iteration"]]
+      }
+    ]
+  }
+}

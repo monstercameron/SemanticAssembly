@@ -1,0 +1,46 @@
+This is RISC-V RV64 assembly (GNU assembler syntax). Registers: a0-a7 arguments/results and caller-saved; t0-t6 caller-saved temporaries; s0-s11 callee-saved; ra the return address; sp the stack pointer, which must be 16-byte aligned at every call. A `call` clobbers ra and every a*/t* register. The file is assembled with riscv64-linux-gnu-gcc and must assemble cleanly and behave correctly. A block of '#' comments at the top of the file states facts about the function (ABI, frame layout, liveness). They are informative comments only.
+
+Answer the question about the file below. Reply with ONLY the short answer: a register name, a decimal number, yes or no, a single word, or (only if the question asks for an instruction) the instruction text. No explanations.
+
+QUESTION: Consider the instruction `mv s1, a0` between the two calls. If it were deleted (and nothing else changed), which later instruction would compute a wrong result first? Answer with the instruction's mnemonic and operands exactly as written.
+
+FILE:
+# FACTS (same information as the semantic source, in prose):
+# function fib:
+#   argument number (Int64) arrives in a0
+#   result result (Int64) leaves in a0
+#   stack frame: 32 bytes, 16-byte aligned
+#   callee-saved returnAddress must be restored on return
+#   callee-saved s0 must be restored on return
+#   callee-saved s1 must be restored on return
+#   slot SlotReturnAddress: offset 24 from sp, holds saved returnAddress
+#   slot SlotSavedS0: offset 16 from sp, holds saved s0
+#   slot SlotSavedS1: offset 8 from sp, holds saved s1
+#   value number: the input; must survive both recursive calls
+#   value firstResult: fib(number-1); must survive the second call
+#   value result: the returned Fibonacci number; on the base path it IS number (declared phi)
+#   across the call at `fib`: number must survive in s0
+#   across the call at `fib`: firstResult must survive in s1
+#
+	.text
+	.globl	fib
+fib:
+	addi	sp, sp, -32
+	sd	ra, 24(sp)
+	sd	s0, 16(sp)
+	sd	s1, 8(sp)
+	li	t0, 2
+	blt	a0, t0, .Lepilogue
+	mv	s0, a0
+	addi	a0, s0, -1
+	call	fib
+	mv	s1, a0
+	addi	a0, s0, -2
+	call	fib
+	add	a0, s1, a0
+.Lepilogue:
+	ld	ra, 24(sp)
+	ld	s0, 16(sp)
+	ld	s1, 8(sp)
+	addi	sp, sp, 32
+	ret

@@ -502,6 +502,43 @@ def _check_restore_paths(prog, fn, ops, abi, syscalls, add) -> None:
                 worklist.append(s)
 
 
+def _check_spill_rows(prog, fn, add) -> None:
+    """E-ABI-PRESERVE, the row-consistency half: a `saves r slot` /
+    `restores r slot` fact must describe what its own row DOES — the row's
+    memory operand must address the named slot, and the register moved must
+    be r. Without this the pairing check above is satisfiable by facts that
+    lie about which slot the store/load actually touches (hole found by the
+    D1 trace probes, 2026-06-10)."""
+    slot_off = {s.name: s.scalar("offset") for s in prog.of_type("stackSlot")}
+    for blk in prog.members_of(fn.name, "block"):
+        for i in prog.members_of(blk.name, "insn"):
+            for pred, regfield in (("saves", "secondSource"),
+                                   ("restores", "destination")):
+                for r in i.all(pred):
+                    if len(r) < 2:
+                        continue
+                    reg, slot = r[0], r[1]
+                    moved = i.scalar(regfield)
+                    if moved is not None and moved != reg:
+                        add("error", "E-ABI-PRESERVE", i.name,
+                            f"declares `{pred} {reg} {slot}` but the row "
+                            f"moves {moved}, not {reg}")
+                    off = i.scalar("offset")
+                    if off is None or slot not in slot_off or off == slot:
+                        continue
+                    verb = "store" if pred == "saves" else "load"
+                    if off in slot_off:
+                        add("error", "E-ABI-PRESERVE", i.name,
+                            f"declares `{pred} {reg} {slot}` but the row's "
+                            f"offset addresses {off} — the {verb} does not "
+                            f"touch the declared slot")
+                    elif str(off) != str(slot_off[slot]):
+                        add("error", "E-ABI-PRESERVE", i.name,
+                            f"declares `{pred} {reg} {slot}` (offset "
+                            f"{slot_off[slot]}) but the row's {verb} uses "
+                            f"offset {off}")
+
+
 _TERMINATOR_KINDS = {"branch", "jump", "return", "syscall"}
 
 
@@ -1344,6 +1381,7 @@ def validate(prog: Program) -> list[Diagnostic]:
 
         _check_preserve(prog, fn, ops, abi, add)
         _check_restore_paths(prog, fn, ops, abi, syscalls, add)
+        _check_spill_rows(prog, fn, add)
         _check_lint(prog, fn, ops, abi, add)
         _check_rmw(prog, fn, ops, concurrent_regions, add)
         _check_stack(prog, fn, ops, syscalls, add)

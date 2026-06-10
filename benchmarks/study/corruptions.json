@@ -1,0 +1,16 @@
+{
+  "c1": {
+    "function": "fib",
+    "lie": ["callFibNumberMinusOne liveOut s0:number", "callFibNumberMinusOne liveOut s1:number"],
+    "task": "Immediately after the first recursive call returns, copy the register that still holds the original input `number` into t1, and change the second argument computation to compute number-2 from t1 instead of from its current source register. Behavior must be unchanged.",
+    "truth_register": "s0",
+    "lie_register": "s1"
+  },
+  "c2": {
+    "function": "quicksort",
+    "lie": ["callSortLeft liveOut s2:pivotIndex", "callSortLeft liveOut t0:pivotIndex"],
+    "task": "Immediately after the first recursive call returns, copy the register that still holds `pivotIndex` into t6, and compute the right recursion's low bound as t6 plus 1 (into a1) instead of its current form. Behavior must be unchanged.",
+    "truth_register": "s2",
+    "lie_register": "t0"
+  }
+}

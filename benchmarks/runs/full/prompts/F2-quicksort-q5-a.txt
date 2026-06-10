@@ -1,0 +1,62 @@
+This is RISC-V RV64 assembly (GNU assembler syntax). Registers: a0-a7 arguments/results and caller-saved; t0-t6 caller-saved temporaries; s0-s11 callee-saved; ra the return address; sp the stack pointer, which must be 16-byte aligned at every call. A `call` clobbers ra and every a*/t* register. The file is assembled with riscv64-linux-gnu-gcc and must assemble cleanly and behave correctly.
+
+TASK: Invert the element test in the partition body: make the conditional branch be taken when the element is less than or equal to the pivot (jumping to the swap code), with the fall-through path advancing the scan index. Reorder the swap and advance blocks as needed so every fall-through edge remains adjacent and behavior is unchanged.
+
+Edit the file below to accomplish the task. qsort64(long *a, long lo, long hi) must sort a[lo..hi] in place (inclusive bounds); the test harness checks arrays with duplicates, already-sorted, reverse-sorted, and single-element inputs.
+Return the COMPLETE edited file content (the whole file, top to bottom). Do not wrap it in markdown fences. Do not add explanations.
+
+FILE:
+	.text
+	.globl	qsort64
+qsort64:
+	addi	sp, sp, -32
+	sd	ra, 24(sp)
+	sd	s0, 16(sp)
+	sd	s1, 8(sp)
+	sd	s2, 0(sp)
+	bge	a1, a2, .Lepilogue
+	slli	t0, a2, 3
+	add	t1, a0, t0
+	ld	t2, 0(t1)
+	addi	t3, a1, -1
+	mv	t4, a1
+.Lpartitioncheck:
+	bge	t4, a2, .Lpartitiondone
+	slli	t0, t4, 3
+	add	t1, a0, t0
+	ld	t5, 0(t1)
+	blt	t2, t5, .Ladvancescan
+	addi	t3, t3, 1
+	slli	t0, t3, 3
+	add	t6, a0, t0
+	ld	t0, 0(t6)
+	sd	t5, 0(t6)
+	sd	t0, 0(t1)
+.Ladvancescan:
+	addi	t4, t4, 1
+	j	.Lpartitioncheck
+.Lpartitiondone:
+	addi	t0, t3, 1
+	slli	t1, t0, 3
+	add	t1, a0, t1
+	ld	t5, 0(t1)
+	slli	t6, a2, 3
+	add	t6, a0, t6
+	sd	t5, 0(t6)
+	sd	t2, 0(t1)
+	mv	s0, a0
+	mv	s1, a2
+	mv	s2, t0
+	addi	a2, t0, -1
+	call	qsort64
+	mv	a0, s0
+	addi	a1, s2, 1
+	mv	a2, s1
+	call	qsort64
+.Lepilogue:
+	ld	ra, 24(sp)
+	ld	s0, 16(sp)
+	ld	s1, 8(sp)
+	ld	s2, 0(sp)
+	addi	sp, sp, 32
+	ret
