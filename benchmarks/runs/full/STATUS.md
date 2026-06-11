@@ -11,6 +11,13 @@ Round-1 state when paused (session-limit economics; resumed later by design):
 
 Raw tables: `raw_tables.md` (regenerate with `python benchmarks/study.py report`).
 
+**Model split (cost decision, 2026-06-10):** round-1 cells filled before the
+pause (all of fib F2, F1, F3) used Fable 5 subagents; the resumed remainder
+(quicksort F2, F3T traces) and all Protocol-2 rounds use Sonnet 4.6. Arm
+comparisons are always within a function/task, so the split does not enter
+the arm contrast — but cross-function comparisons (fib vs quicksort rates)
+now carry a model confound and must be read per-function.
+
 ## What the partial data already shows (read with n caveats)
 
 1. **F1 saturates at this function size**: 100% accuracy on every arm,

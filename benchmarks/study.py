@@ -452,6 +452,14 @@ def report():
 
     def cellmeta(name): return manifest[name.split("__")[0]]
 
+    # freshness guard (review 2026-06-10 #4): a candidate on disk that has no
+    # score entry would silently drop a sample from every table below.
+    unscored = [f.stem for f in (RUN / "candidates").iterdir()
+                if not f.stem.endswith(".out") and f.stem not in scores]
+    if unscored:
+        print(f"WARNING: {len(unscored)} candidates have NO score entry — "
+              f"run `score` first. e.g. {unscored[:3]}")
+
     # F2/F3: per (function-task, arm): round-1 pass rate (P1) and
     # final pass-by-round (P2), keyed from candidate tags r<k>s<i>.
     from collections import defaultdict
@@ -466,8 +474,16 @@ def report():
         key = f"{m['family']}:{m['function']}:{m.get('task', m.get('corruption'))}"
         edits[key][m["arm"]].setdefault(smp, {})[int(rnd)] = sc["pass"]
 
+    # honest protocol labeling (review 2026-06-10 #2): with only round 1 on
+    # disk the closed-loop column would silently equal Protocol 1 while
+    # LOOKING like Protocol-2 evidence.
+    max_round = max((int(n.split("__")[1][1:].split("s")[0])
+                     for n in scores), default=1)
+    p2_label = (f"closed-loop pass (rounds 1-{max_round})" if max_round > 1
+                else "(no feedback rounds run yet — column equals P1)")
     lines = ["# F2/F3 edit results (raw)", "",
-             "| cell | arm | n | P1 pass (r1) | P2 pass (<=4 rounds) | "
+             f"Feedback rounds present: {max_round} of 4 planned.", "",
+             f"| cell | arm | n | P1 pass (r1) | {p2_label} | "
              "mean rounds-to-success |", "|---|---|---|---|---|---|"]
     for key in sorted(edits):
         for arm in "acdb":

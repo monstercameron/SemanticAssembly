@@ -1,9 +1,10 @@
 # Semantic Assembly (`sasm`)
 
 > **Agent-editable RISC-V.** A thin, row-based layer over RISC-V assembly where
-> every hidden assumption — register liveness, ABI contracts, stack layout,
-> memory regions, effects, intent — is promoted into an explicit, *checkable*
-> fact. A compiler lowers it to ordinary `.s`; a validator catches the mistakes
+> the hidden assumptions of the enumerated vocabulary — register liveness, ABI
+> contracts, stack layout, memory regions, effects, intent (LANGUAGE.md; the
+> general "is this fact derivable?" oracle is still open, TODOS A1) — are
+> promoted into explicit, *checkable* facts. A compiler lowers it to ordinary `.s`; a validator catches the mistakes
 > assembly normally hides.
 
 ```text
