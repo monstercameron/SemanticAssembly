@@ -1,0 +1,6 @@
+sasm build refused the file:
+error E-ISA-OPCODE swapIfLeOrEqual: unknown operation 'BranchGreaterThan'
+error E-CFG-EDGE PartitionBody: declares `terminates branch` but the last row (swapIfLeOrEqual) is fallthrough
+error E-CFG-LAYOUT PartitionBody: falls through without a terminator but declares 2 successors — exactly one (the physically next block) is required
+error E-CFG-EDGE PartitionBody: declares `successor SwapElements` but the terminator cannot take that edge — a stale edge silently widens every dataflow merge
+error E-CFG-EDGE SwapElements: declares predecessors ['PartitionBody'] but the CFG computes [] — `predecessor` must be the exact inverse of `successor` when present

@@ -1,0 +1,2 @@
+sasm build refused the file:
+error E-VALUE-FLOW computeNumberMinusTwo: reads number but ['t1'] hold ['·def:moveNumberToT1:t1']

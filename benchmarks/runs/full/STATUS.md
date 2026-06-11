@@ -1,13 +1,19 @@
-# D1 full study — PAUSED mid-run (2026-06-10)
+# D1 full study — ROUND 1 COMPLETE; Protocol-2 rounds in flight (2026-06-10/11)
 
-Round-1 state when paused (session-limit economics; resumed later by design):
-
-| family | cells | filled | notes |
+| family | cells | filled | round-1 result |
 |---|---|---|---|
-| F1 comprehension | 280 | **280 — COMPLETE** | 280/280 correct, ALL arms (incl. raw `.s`) |
-| F2 edits | 320 | 117 | fib complete (n=8–10/cell); quicksort q1–q5 partial |
-| F3 stale-fact probes | 40 | 40 — COMPLETE (r1) | P2 rounds not yet run |
-| F3T traces | 40 | 0 | not started |
+| F1 comprehension | 280 | 280 — COMPLETE | 280/280 correct, ALL arms — saturated, no discriminatory power |
+| F2 edits | 320 | 320 — COMPLETE | 269/320 pass r1; failures: 33 arm b (32 at the VALIDATE stage), 7 a, 0 c, 1 d, plus q4-a 6 + q5-a 1 + q5-d 1 |
+| F3 stale-fact probes | 40 | 40 — COMPLETE | d 20/20 (lie ignored); b 9/19, 11 validator refusals |
+| F3T traces | 40 | 40 — COMPLETE | 40/40 correct, BOTH arms — saturated |
+
+**Round-1 headline (one-shot, honest):** arm c (prose block) is the strongest
+arm on the quicksort edit set (10/10 everywhere); arm b loses one-shot — but
+42 of its 43 failures are `stage=validate` (the fact-consistency bar refused
+the file), exactly 1 is an observed behavioral failure. Whether diagnostics
+convert those refusals into passes is what the in-flight Protocol-2 rounds
+measure. 51 round-2 prompts generated; round-2 wave running (early partial:
+15 of the first 23 round-2 attempts pass).
 
 Raw tables: `raw_tables.md` (regenerate with `python benchmarks/study.py report`).
 
@@ -38,18 +44,22 @@ now carry a model confound and must be read per-function.
    lie still in the file — invisible to the behavioral oracle, visible in the
    artifact).
 
-## To resume
+## Round-2 result (Protocol 2, first feedback round — 2026-06-11)
 
-1. `python benchmarks/study.py missing` → 243 round-1 cells listed in
-   `missing.json` (203 F2 quicksort edits + 40 F3T traces).
-2. Re-launch the sequential filler workflow (one agent at a time) over
-   `missing.json` — editor cells write `candidates/<name><ext>`, answer cells
-   write `answers/<name>.txt`; prompts in `prompts/<cell>.txt`.
-3. `python benchmarks/study.py score` after each wave.
-4. Protocol 2: `python benchmarks/study.py rounds 2` → sequential editor wave
-   over `prompts/r2/*` → score → repeat for rounds 3, 4.
-5. `python benchmarks/study.py score-answers`, then `report`, then write
-   `results.md` and update TODOS D1 / DESIGN §16.1 / README.
+One feedback round converted most of arm b's validator refusals:
+q3-b 3/10 → 10/10 · q5-b 2/10 → 8/10 · F3-c1-b 1/10 → 9/10 (the diagnostic
+names the stale row) · F3-c2-b 8/10 → 10/10 · t3-b 2/10 → 4/10 ·
+q4-b 1/10 → 3/10. Arm a's failures also recovered with assembler+qemu
+feedback alone (q4-a 4/10 → 10/10). 16 b-cells remain failing after round 2
+(t3 6, q4 7, q5 2, c1 1); rounds 3–4 not yet run. PAUSED here at Cam's
+request.
+
+## Remaining
+
+1. Protocol-2 rounds: round 2 in flight; then `python benchmarks/study.py
+   rounds 3` → sequential wave → score → round 4 likewise.
+2. `report`, then `results.md` bounded by `REVIEW-2026-06-10.md`, then
+   TODOS D1 / DESIGN §16.1 / README updates.
 
 A validator hole found while building the probes (saves/restores row
 consistency) is already fixed + regression-tested (`tests/test_spillrow.py`).

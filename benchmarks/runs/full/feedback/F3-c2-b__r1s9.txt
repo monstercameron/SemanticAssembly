@@ -1,0 +1,3 @@
+sasm build refused the file:
+error E-LIVE-ASSERT callSortLeft: declares `liveOut t0:pivotIndex` but t0 is not live here
+error E-VALUE-FLOW computeRightLow: reads pivotIndex but ['t6'] hold ['·def:copyPivotIndexToT6:t6']

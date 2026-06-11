@@ -1,0 +1,4 @@
+sasm build refused the file:
+error E-VALUE-FLOW saveFirstResult: `writes` on an operation that defines no register (or discards to `zero`) — the binding cannot exist
+error E-VALUE-FLOW loadFirstResult: reads firstResult but ['stackPointer'] hold ['·def:allocateFrame:stackPointer']
+error E-VALUE-FLOW addResults: reads firstResult but ['a0', 't2'] hold ['·call:callFibNumberMinusTwo:a0', '·def:loadFirstResult:t2']

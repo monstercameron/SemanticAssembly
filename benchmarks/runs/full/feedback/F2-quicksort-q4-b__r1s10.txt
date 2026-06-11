@@ -1,0 +1,5 @@
+sasm build refused the file:
+error E-CFG-LAYOUT PartitionBody: falls through to SwapElements but the next block in layout is AdvanceScan — reorder the blocks or make the edge an explicit Jump row
+error E-CFG-LAYOUT SwapElements: Quicksort runs off its last block SwapElements without a terminator — end it with Return or Jump
+error E-CFG-EDGE SwapElements: declares `successor AdvanceScan` but the terminator cannot take that edge — a stale edge silently widens every dataflow merge
+error E-CFG-EDGE AdvanceScan: declares predecessors ['PartitionBody', 'SwapElements'] but the CFG computes ['PartitionBody'] — `predecessor` must be the exact inverse of `successor` when present

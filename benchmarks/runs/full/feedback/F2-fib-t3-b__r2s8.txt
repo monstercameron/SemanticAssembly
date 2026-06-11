@@ -1,0 +1,4 @@
+sasm build refused the file:
+error E-ABI-PRESERVE saveFirstResult: declares `saves firstResult SlotFirstResult` but the row moves a0, not firstResult
+error E-ABI-PRESERVE loadFirstResult: declares `restores firstResult SlotFirstResult` but the row moves t2, not firstResult
+error E-VALUE-FLOW addResults: reads firstResult but ['a0', 't2'] hold ['·call:callFibNumberMinusTwo:a0', '·def:loadFirstResult:t2']

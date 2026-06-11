@@ -1,0 +1,598 @@
+This is semantic assembly (.sasm): one fact per row, in the form `subject predicate arguments...`. Entities are declared with `is` (program/function/block/insn/value/stackSlot/memoryRegion); each insn maps 1:1 to one assembly statement. Instruction fields: `operation` (a semantic op such as Add, AddImmediate, Move, Call, LoadDoubleword, StoreDoubleword, BranchLessThan, BranchGreaterOrEqual, Jump, Return, ShiftLeftLogicalImmediate, LoadImmediate), `destination`/`firstSource`/`secondSource`, and `base` + `offset` (a stackSlot handle or an integer) for memory ops. Semantic facts: `reads <value>`/`writes <value>` bind the row's registers to named values; `liveOut reg:value` asserts a value survives a call in that register; `saves reg slot` / `restores reg slot` pair a spill through a named stackSlot. A store to a slot does not `write` a value — the value binding stays on the producing instruction; stores and loads carry it through memory. Blocks declare `successor` edges and `terminates`; source order is layout, so every fall-through edge must be adjacent. The file is compiled with `sasm build`, which VALIDATES every fact (facts and code must agree) before emitting assembly that is then assembled and run.
+
+TASK: Stop using s1 to carry the first recursive call's result. Instead: immediately after the first call, store a0 to the stack at offset 0 from sp; immediately before the final add, load that saved value into t2; the final add must then use t2 instead of s1. Remove s1's save and restore (and any related declarations), keeping the frame size at 32 bytes. Behavior must be unchanged.
+
+Edit the file below to accomplish the task. fib(n) must compute the nth Fibonacci number recursively; the test harness checks fib(10) = 55.
+Return the COMPLETE edited file content (the whole file, top to bottom). Do not wrap it in markdown fences. Do not add explanations.
+
+FILE:
+# fib(number) = (number < 2) ? number : fib(number-1) + fib(number-2)
+#   --   recursion + CLOBBER HANDLING.
+#
+# ==========================================================================
+# HOW WE HANDLE CLOBBERING (the whole point of this example)
+# --------------------------------------------------------------------------
+# A `Call` clobbers every CALLER-saved register (returnAddress, t*, a*) — this
+# set is DERIVED from abi.tsv, never hand-listed (that would be S-derivable).
+# So any value that must outlive a call cannot sit in a caller-saved register.
+#
+#   * number is needed after BOTH calls       -> move it to s0 (callee-saved)
+#   * fib(number-1) is needed after 2nd call  -> hold it in s1 (callee-saved)
+#   * returnAddress is clobbered by every call-> save it to a stack slot
+#
+# Because we reuse s0/s1, we must first SAVE the caller's s0/s1 (and
+# returnAddress) to the frame and RESTORE them on the way out.
+#
+# The validator turns this into checks. The NAIVE version that leaves number in
+# a0 across the call:
+#       callFibNumberMinusOne operation Call ...   # would clobber a0
+#   diagnostic -> W-CLOBBER callFibNumberMinusOne: a0:number is live across this
+#                 call but a0 is caller-saved. Move number to a callee-saved
+#                 register or spill it.
+# The facts below are what make that check possible — and what an agent edits
+# against instead of silently breaking the recursion.
+# ==========================================================================
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+# ---- values that cross a call boundary (surfaced per LANGUAGE §0.5) ----
+
+number is value
+number type Int64
+number signed yes
+number meaning "the input; must survive both recursive calls"
+
+firstResult is value
+firstResult type Int64
+firstResult meaning "fib(number-1); must survive the second call"
+
+result is value
+result type Int64
+result mergesFrom number
+result meaning "the returned Fibonacci number; on the base path it IS number (declared phi)"
+
+Fib is function
+Fib symbol fib
+Fib visibility global
+Fib abi linux.riscv64
+Fib in number Int64 a0
+Fib out result Int64 a0
+Fib effect call
+Fib leaf no
+Fib calls fib
+Fib stack bytes 32
+Fib stack align 16
+Fib preserves returnAddress
+Fib preserves s0
+Fib preserves s1
+Fib purpose "Compute the nth Fibonacci number recursively"
+# The prologue/epilogue stack loads/stores are `region stackFrame` => INTERNAL
+# effects (internal-effect rule), so the observable effect set is just `call`.
+
+# ---- named stack slots (offsets are facts, not magic numbers) ----
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Fib
+SlotReturnAddress offset 24
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Fib
+SlotSavedS0 offset 16
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+SlotSavedS1 is stackSlot
+SlotSavedS1 in Fib
+SlotSavedS1 offset 8
+SlotSavedS1 type Int64
+SlotSavedS1 role savedRegister
+SlotSavedS1 stores s1
+
+# ---- blocks ----
+
+Prologue is block
+Prologue in Fib
+Prologue entry yes
+Prologue terminates branch
+Prologue successor Recurse
+Prologue successor Epilogue
+Prologue purpose "Build frame, save returnAddress/s0/s1, take base case if number < 2"
+
+Recurse is block
+Recurse in Fib
+Recurse terminates fallthrough
+Recurse predecessor Prologue
+Recurse successor Epilogue
+Recurse purpose "result = fib(number-1) + fib(number-2)"
+
+Epilogue is block
+Epilogue in Fib
+Epilogue terminates return
+Epilogue predecessor Prologue
+Epilogue predecessor Recurse
+Epilogue purpose "Restore saved registers, free frame, return"
+
+# ---- prologue: allocate + save callee-saved + base-case test ----
+
+allocateFrame is insn
+allocateFrame in Prologue
+allocateFrame operation AddImmediate
+allocateFrame destination stackPointer
+allocateFrame firstSource stackPointer
+allocateFrame immediate -32
+allocateFrame effect stack.allocate
+allocateFrame purpose "Allocate a 16-byte-aligned 32-byte frame"
+
+saveReturnAddress is insn
+saveReturnAddress in Prologue
+saveReturnAddress operation StoreDoubleword
+saveReturnAddress secondSource returnAddress
+saveReturnAddress base stackPointer
+saveReturnAddress offset SlotReturnAddress
+saveReturnAddress effect memory.write
+saveReturnAddress memory region stackFrame
+saveReturnAddress saves returnAddress SlotReturnAddress
+saveReturnAddress purpose "Save returnAddress: every Call clobbers it"
+
+saveCallerS0 is insn
+saveCallerS0 in Prologue
+saveCallerS0 operation StoreDoubleword
+saveCallerS0 secondSource s0
+saveCallerS0 base stackPointer
+saveCallerS0 offset SlotSavedS0
+saveCallerS0 effect memory.write
+saveCallerS0 memory region stackFrame
+saveCallerS0 saves s0 SlotSavedS0
+saveCallerS0 purpose "Preserve caller's s0 before we reuse it for number"
+
+saveCallerS1 is insn
+saveCallerS1 in Prologue
+saveCallerS1 operation StoreDoubleword
+saveCallerS1 secondSource s1
+saveCallerS1 base stackPointer
+saveCallerS1 offset SlotSavedS1
+saveCallerS1 effect memory.write
+saveCallerS1 memory region stackFrame
+saveCallerS1 saves s1 SlotSavedS1
+saveCallerS1 purpose "Preserve caller's s1 before we reuse it for fib(number-1)"
+
+loadConstantTwo is insn
+loadConstantTwo in Prologue
+loadConstantTwo operation LoadImmediate
+loadConstantTwo destination t0
+loadConstantTwo immediate 2
+loadConstantTwo purpose "Constant 2 (adjacent scratch, not named)"
+
+baseCaseBranch is insn
+baseCaseBranch in Prologue
+baseCaseBranch operation BranchLessThan
+baseCaseBranch firstSource a0
+baseCaseBranch secondSource t0
+baseCaseBranch target Epilogue
+baseCaseBranch fallthrough Recurse
+baseCaseBranch reads number
+baseCaseBranch condition "base case: if number < 2, a0 already holds the answer (fib(number)=number)"
+
+# ---- recurse: the clobber-sensitive region ----
+
+moveNumberToS0 is insn
+moveNumberToS0 in Recurse
+moveNumberToS0 operation Move
+moveNumberToS0 destination s0
+moveNumberToS0 firstSource a0
+moveNumberToS0 reads number
+moveNumberToS0 writes number
+moveNumberToS0 purpose "number -> s0 (callee-saved): a0 is caller-saved and Call would clobber number"
+
+computeNumberMinusOne is insn
+computeNumberMinusOne in Recurse
+computeNumberMinusOne operation AddImmediate
+computeNumberMinusOne destination a0
+computeNumberMinusOne firstSource s0
+computeNumberMinusOne immediate -1
+computeNumberMinusOne reads number
+computeNumberMinusOne purpose "argument = number - 1 (transient, consumed by the call)"
+
+callFibNumberMinusOne is insn
+callFibNumberMinusOne in Recurse
+callFibNumberMinusOne operation Call
+callFibNumberMinusOne symbol fib
+callFibNumberMinusOne effect call
+callFibNumberMinusOne liveOut s0:number
+callFibNumberMinusOne purpose "a0 = fib(number-1). number survives in s0 (callee-saved) — safe across the call"
+
+saveFirstResult is insn
+saveFirstResult in Recurse
+saveFirstResult operation Move
+saveFirstResult destination s1
+saveFirstResult firstSource a0
+saveFirstResult writes firstResult
+saveFirstResult purpose "fib(number-1) -> s1 before the second Call clobbers a0"
+
+computeNumberMinusTwo is insn
+computeNumberMinusTwo in Recurse
+computeNumberMinusTwo operation AddImmediate
+computeNumberMinusTwo destination a0
+computeNumberMinusTwo firstSource s0
+computeNumberMinusTwo immediate -2
+computeNumberMinusTwo reads number
+computeNumberMinusTwo purpose "argument = number - 2"
+
+callFibNumberMinusTwo is insn
+callFibNumberMinusTwo in Recurse
+callFibNumberMinusTwo operation Call
+callFibNumberMinusTwo symbol fib
+callFibNumberMinusTwo effect call
+callFibNumberMinusTwo liveOut s1:firstResult
+callFibNumberMinusTwo purpose "a0 = fib(number-2). firstResult survives in s1 — safe; number (s0) is now dead"
+
+addResults is insn
+addResults in Recurse
+addResults operation Add
+addResults destination a0
+addResults firstSource s1
+addResults secondSource a0
+addResults reads firstResult
+addResults writes result
+addResults purpose "result = fib(number-1) + fib(number-2)"
+
+# ---- epilogue: restore + free + return ----
+# NOTE (value-flow): at Epilogue, a0 is a merge (phi) of `number` (base path,
+# baseCaseBranch) and `result` (recurse path, addResults). The merge is DECLARED
+# above (`result mergesFrom number`), so both the static union and the runtime
+# taint check accept the base path while still rejecting any other tag.
+
+restoreReturnAddress is insn
+restoreReturnAddress in Epilogue
+restoreReturnAddress operation LoadDoubleword
+restoreReturnAddress destination returnAddress
+restoreReturnAddress base stackPointer
+restoreReturnAddress offset SlotReturnAddress
+restoreReturnAddress effect memory.read
+restoreReturnAddress memory region stackFrame
+restoreReturnAddress restores returnAddress SlotReturnAddress
+restoreReturnAddress purpose "Restore return address"
+
+restoreCallerS0 is insn
+restoreCallerS0 in Epilogue
+restoreCallerS0 operation LoadDoubleword
+restoreCallerS0 destination s0
+restoreCallerS0 base stackPointer
+restoreCallerS0 offset SlotSavedS0
+restoreCallerS0 effect memory.read
+restoreCallerS0 memory region stackFrame
+restoreCallerS0 restores s0 SlotSavedS0
+restoreCallerS0 purpose "Restore caller's s0 (callee-saved contract)"
+
+restoreCallerS1 is insn
+restoreCallerS1 in Epilogue
+restoreCallerS1 operation LoadDoubleword
+restoreCallerS1 destination s1
+restoreCallerS1 base stackPointer
+restoreCallerS1 offset SlotSavedS1
+restoreCallerS1 effect memory.read
+restoreCallerS1 memory region stackFrame
+restoreCallerS1 restores s1 SlotSavedS1
+restoreCallerS1 purpose "Restore caller's s1 (callee-saved contract)"
+
+freeFrame is insn
+freeFrame in Epilogue
+freeFrame operation AddImmediate
+freeFrame destination stackPointer
+freeFrame firstSource stackPointer
+freeFrame immediate 32
+freeFrame effect stack.free
+freeFrame purpose "Free the frame"
+
+returnResult is insn
+returnResult in Epilogue
+returnResult operation Return
+returnResult returns result
+returnResult purpose "Return the Fibonacci number in a0"
+
+
+--- ATTEMPT 1 FAILED ---
+Your previous attempt was:
+# fib(number) = (number < 2) ? number : fib(number-1) + fib(number-2)
+#   --   recursion + CLOBBER HANDLING.
+#
+# ==========================================================================
+# HOW WE HANDLE CLOBBERING (the whole point of this example)
+# --------------------------------------------------------------------------
+# A `Call` clobbers every CALLER-saved register (returnAddress, t*, a*) — this
+# set is DERIVED from abi.tsv, never hand-listed (that would be S-derivable).
+# So any value that must outlive a call cannot sit in a caller-saved register.
+#
+#   * number is needed after BOTH calls       -> move it to s0 (callee-saved)
+#   * fib(number-1) is needed after 2nd call  -> store it to stack slot at offset 0
+#   * returnAddress is clobbered by every call-> save it to a stack slot
+#
+# Because we reuse s0, we must first SAVE the caller's s0 (and
+# returnAddress) to the frame and RESTORE them on the way out.
+#
+# The validator turns this into checks. The NAIVE version that leaves number in
+# a0 across the call:
+#       callFibNumberMinusOne operation Call ...   # would clobber a0
+#   diagnostic -> W-CLOBBER callFibNumberMinusOne: a0:number is live across this
+#                 call but a0 is caller-saved. Move number to a callee-saved
+#                 register or spill it.
+# The facts below are what make that check possible — and what an agent edits
+# against instead of silently breaking the recursion.
+# ==========================================================================
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+# ---- values that cross a call boundary (surfaced per LANGUAGE §0.5) ----
+
+number is value
+number type Int64
+number signed yes
+number meaning "the input; must survive both recursive calls"
+
+firstResult is value
+firstResult type Int64
+firstResult meaning "fib(number-1); must survive the second call"
+
+result is value
+result type Int64
+result mergesFrom number
+result meaning "the returned Fibonacci number; on the base path it IS number (declared phi)"
+
+Fib is function
+Fib symbol fib
+Fib visibility global
+Fib abi linux.riscv64
+Fib in number Int64 a0
+Fib out result Int64 a0
+Fib effect call
+Fib leaf no
+Fib calls fib
+Fib stack bytes 32
+Fib stack align 16
+Fib preserves returnAddress
+Fib preserves s0
+Fib purpose "Compute the nth Fibonacci number recursively"
+# The prologue/epilogue stack loads/stores are `region stackFrame` => INTERNAL
+# effects (internal-effect rule), so the observable effect set is just `call`.
+
+# ---- named stack slots (offsets are facts, not magic numbers) ----
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Fib
+SlotReturnAddress offset 24
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Fib
+SlotSavedS0 offset 16
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+SlotFirstResult is stackSlot
+SlotFirstResult in Fib
+SlotFirstResult offset 0
+SlotFirstResult type Int64
+SlotFirstResult role spill
+SlotFirstResult stores firstResult
+
+# ---- blocks ----
+
+Prologue is block
+Prologue in Fib
+Prologue entry yes
+Prologue terminates branch
+Prologue successor Recurse
+Prologue successor Epilogue
+Prologue purpose "Build frame, save returnAddress/s0, take base case if number < 2"
+
+Recurse is block
+Recurse in Fib
+Recurse terminates fallthrough
+Recurse predecessor Prologue
+Recurse successor Epilogue
+Recurse purpose "result = fib(number-1) + fib(number-2)"
+
+Epilogue is block
+Epilogue in Fib
+Epilogue terminates return
+Epilogue predecessor Prologue
+Epilogue predecessor Recurse
+Epilogue purpose "Restore saved registers, free frame, return"
+
+# ---- prologue: allocate + save callee-saved + base-case test ----
+
+allocateFrame is insn
+allocateFrame in Prologue
+allocateFrame operation AddImmediate
+allocateFrame destination stackPointer
+allocateFrame firstSource stackPointer
+allocateFrame immediate -32
+allocateFrame effect stack.allocate
+allocateFrame purpose "Allocate a 16-byte-aligned 32-byte frame"
+
+saveReturnAddress is insn
+saveReturnAddress in Prologue
+saveReturnAddress operation StoreDoubleword
+saveReturnAddress secondSource returnAddress
+saveReturnAddress base stackPointer
+saveReturnAddress offset SlotReturnAddress
+saveReturnAddress effect memory.write
+saveReturnAddress memory region stackFrame
+saveReturnAddress saves returnAddress SlotReturnAddress
+saveReturnAddress purpose "Save returnAddress: every Call clobbers it"
+
+saveCallerS0 is insn
+saveCallerS0 in Prologue
+saveCallerS0 operation StoreDoubleword
+saveCallerS0 secondSource s0
+saveCallerS0 base stackPointer
+saveCallerS0 offset SlotSavedS0
+saveCallerS0 effect memory.write
+saveCallerS0 memory region stackFrame
+saveCallerS0 saves s0 SlotSavedS0
+saveCallerS0 purpose "Preserve caller's s0 before we reuse it for number"
+
+loadConstantTwo is insn
+loadConstantTwo in Prologue
+loadConstantTwo operation LoadImmediate
+loadConstantTwo destination t0
+loadConstantTwo immediate 2
+loadConstantTwo purpose "Constant 2 (adjacent scratch, not named)"
+
+baseCaseBranch is insn
+baseCaseBranch in Prologue
+baseCaseBranch operation BranchLessThan
+baseCaseBranch firstSource a0
+baseCaseBranch secondSource t0
+baseCaseBranch target Epilogue
+baseCaseBranch fallthrough Recurse
+baseCaseBranch reads number
+baseCaseBranch condition "base case: if number < 2, a0 already holds the answer (fib(number)=number)"
+
+# ---- recurse: the clobber-sensitive region ----
+
+moveNumberToS0 is insn
+moveNumberToS0 in Recurse
+moveNumberToS0 operation Move
+moveNumberToS0 destination s0
+moveNumberToS0 firstSource a0
+moveNumberToS0 reads number
+moveNumberToS0 writes number
+moveNumberToS0 purpose "number -> s0 (callee-saved): a0 is caller-saved and Call would clobber number"
+
+computeNumberMinusOne is insn
+computeNumberMinusOne in Recurse
+computeNumberMinusOne operation AddImmediate
+computeNumberMinusOne destination a0
+computeNumberMinusOne firstSource s0
+computeNumberMinusOne immediate -1
+computeNumberMinusOne reads number
+computeNumberMinusOne purpose "argument = number - 1 (transient, consumed by the call)"
+
+callFibNumberMinusOne is insn
+callFibNumberMinusOne in Recurse
+callFibNumberMinusOne operation Call
+callFibNumberMinusOne symbol fib
+callFibNumberMinusOne effect call
+callFibNumberMinusOne liveOut s0:number
+callFibNumberMinusOne purpose "a0 = fib(number-1). number survives in s0 (callee-saved) — safe across the call"
+
+saveFirstResult is insn
+saveFirstResult in Recurse
+saveFirstResult operation StoreDoubleword
+saveFirstResult secondSource a0
+saveFirstResult base stackPointer
+saveFirstResult offset SlotFirstResult
+saveFirstResult effect memory.write
+saveFirstResult memory region stackFrame
+saveFirstResult writes firstResult
+saveFirstResult purpose "fib(number-1) -> stack slot 0 before the second Call clobbers a0"
+
+computeNumberMinusTwo is insn
+computeNumberMinusTwo in Recurse
+computeNumberMinusTwo operation AddImmediate
+computeNumberMinusTwo destination a0
+computeNumberMinusTwo firstSource s0
+computeNumberMinusTwo immediate -2
+computeNumberMinusTwo reads number
+computeNumberMinusTwo purpose "argument = number - 2"
+
+callFibNumberMinusTwo is insn
+callFibNumberMinusTwo in Recurse
+callFibNumberMinusTwo operation Call
+callFibNumberMinusTwo symbol fib
+callFibNumberMinusTwo effect call
+callFibNumberMinusTwo purpose "a0 = fib(number-2). number (s0) is now dead"
+
+loadFirstResult is insn
+loadFirstResult in Recurse
+loadFirstResult operation LoadDoubleword
+loadFirstResult destination t2
+loadFirstResult base stackPointer
+loadFirstResult offset SlotFirstResult
+loadFirstResult effect memory.read
+loadFirstResult memory region stackFrame
+loadFirstResult reads firstResult
+loadFirstResult purpose "Reload fib(number-1) from stack into t2 before the final add"
+
+addResults is insn
+addResults in Recurse
+addResults operation Add
+addResults destination a0
+addResults firstSource t2
+addResults secondSource a0
+addResults reads firstResult
+addResults writes result
+addResults purpose "result = fib(number-1) + fib(number-2)"
+
+# ---- epilogue: restore + free + return ----
+# NOTE (value-flow): at Epilogue, a0 is a merge (phi) of `number` (base path,
+# baseCaseBranch) and `result` (recurse path, addResults). The merge is DECLARED
+# above (`result mergesFrom number`), so both the static union and the runtime
+# taint check accept the base path while still rejecting any other tag.
+
+restoreReturnAddress is insn
+restoreReturnAddress in Epilogue
+restoreReturnAddress operation LoadDoubleword
+restoreReturnAddress destination returnAddress
+restoreReturnAddress base stackPointer
+restoreReturnAddress offset SlotReturnAddress
+restoreReturnAddress effect memory.read
+restoreReturnAddress memory region stackFrame
+restoreReturnAddress restores returnAddress SlotReturnAddress
+restoreReturnAddress purpose "Restore return address"
+
+restoreCallerS0 is insn
+restoreCallerS0 in Epilogue
+restoreCallerS0 operation LoadDoubleword
+restoreCallerS0 destination s0
+restoreCallerS0 base stackPointer
+restoreCallerS0 offset SlotSavedS0
+restoreCallerS0 effect memory.read
+restoreCallerS0 memory region stackFrame
+restoreCallerS0 restores s0 SlotSavedS0
+restoreCallerS0 purpose "Restore caller's s0 (callee-saved contract)"
+
+freeFrame is insn
+freeFrame in Epilogue
+freeFrame operation AddImmediate
+freeFrame destination stackPointer
+freeFrame firstSource stackPointer
+freeFrame immediate 32
+freeFrame effect stack.free
+freeFrame purpose "Free the frame"
+
+returnResult is insn
+returnResult in Epilogue
+returnResult operation Return
+returnResult returns result
+returnResult purpose "Return the Fibonacci number in a0"
+
+Toolchain output for that attempt:
+sasm build refused the file:
+error E-VALUE-FLOW saveFirstResult: `writes` on an operation that defines no register (or discards to `zero`) — the binding cannot exist
+error E-VALUE-FLOW loadFirstResult: reads firstResult but ['stackPointer'] hold ['·def:allocateFrame:stackPointer']
+error E-VALUE-FLOW addResults: reads firstResult but ['a0', 't2'] hold ['·call:callFibNumberMinusTwo:a0', '·def:loadFirstResult:t2']
+
+Produce a corrected COMPLETE file. Same rules: return the whole file, no markdown fences, no explanations.

@@ -1,0 +1,1308 @@
+This is semantic assembly (.sasm): one fact per row, in the form `subject predicate arguments...`. Entities are declared with `is` (program/function/block/insn/value/stackSlot/memoryRegion); each insn maps 1:1 to one assembly statement. Instruction fields: `operation` (a semantic op such as Add, AddImmediate, Move, Call, LoadDoubleword, StoreDoubleword, BranchLessThan, BranchGreaterOrEqual, Jump, Return, ShiftLeftLogicalImmediate, LoadImmediate), `destination`/`firstSource`/`secondSource`, and `base` + `offset` (a stackSlot handle or an integer) for memory ops. Semantic facts: `reads <value>`/`writes <value>` bind the row's registers to named values; `liveOut reg:value` asserts a value survives a call in that register; `saves reg slot` / `restores reg slot` pair a spill through a named stackSlot. A store to a slot does not `write` a value — the value binding stays on the producing instruction; stores and loads carry it through memory. Blocks declare `successor` edges and `terminates`; source order is layout, so every fall-through edge must be adjacent. The file is compiled with `sasm build`, which VALIDATES every fact (facts and code must agree) before emitting assembly that is then assembled and run.
+
+TASK: Invert the element test in the partition body: make the conditional branch be taken when the element is less than or equal to the pivot (jumping to the swap code), with the fall-through path advancing the scan index. Reorder the swap and advance blocks as needed so every fall-through edge remains adjacent and behavior is unchanged.
+
+Edit the file below to accomplish the task. qsort64(long *a, long lo, long hi) must sort a[lo..hi] in place (inclusive bounds); the test harness checks arrays with duplicates, already-sorted, reverse-sorted, and single-element inputs.
+Return the COMPLETE edited file content (the whole file, top to bottom). Do not wrap it in markdown fences. Do not add explanations.
+
+FILE:
+# qsort64(array, low, high) — in-place Lomuto quicksort, inclusive bounds.
+#
+# The survival plan (what raw asm keeps in the programmer's head):
+#   * low        stays in a1 across the WHOLE partition loop (no call touches it,
+#                no loop row writes it) and is consumed by the first recursion;
+#   * array/high/pivotIndex must survive the FIRST recursive call -> s0/s1/s2;
+#   * pivotValue/boundary/scan are loop-carried in t2/t3/t4 (no calls inside
+#                the loop, so caller-saved is safe there — and cheap);
+#   * the swap scratch (t0/t1/t5/t6) is adjacent reuse, deliberately unnamed.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+callerArray is memoryRegion
+callerArray kind heap
+callerArray aliases none
+
+# ---- values that cross blocks or calls (LANGUAGE §0.5) ----
+
+array is value
+array type Int64Pointer
+array meaning "base of the caller's array; must survive the first recursion"
+
+low is value
+low type Int64
+low signed yes
+low meaning "left bound; parked in a1 untouched until the first recursion consumes it"
+
+high is value
+high type Int64
+high signed yes
+high meaning "right bound; must survive the partition loop and the first recursion"
+
+pivotValue is value
+pivotValue type Int64
+pivotValue signed yes
+pivotValue meaning "a[high], chosen pivot; loop-carried through the partition"
+
+boundary is value
+boundary type Int64
+boundary signed yes
+boundary meaning "Lomuto i: last index of the <=pivot prefix; loop-carried"
+
+scan is value
+scan type Int64
+scan signed yes
+scan meaning "Lomuto j: the scanning index; loop-carried"
+
+pivotIndex is value
+pivotIndex type Int64
+pivotIndex signed yes
+pivotIndex meaning "final pivot position p; splits the two recursions, survives the first"
+
+Quicksort is function
+Quicksort symbol qsort64
+Quicksort visibility global
+Quicksort abi linux.riscv64
+Quicksort in array Int64Pointer a0
+Quicksort in low Int64 a1
+Quicksort in high Int64 a2
+Quicksort effect memory.read callerArray
+Quicksort effect memory.write callerArray
+Quicksort effect call
+Quicksort leaf no
+Quicksort calls qsort64
+Quicksort stack bytes 32
+Quicksort stack align 16
+Quicksort preserves returnAddress
+Quicksort preserves s0
+Quicksort preserves s1
+Quicksort preserves s2
+Quicksort purpose "Sort array[low..high] in place; no result register"
+
+# ---- named slots ----
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Quicksort
+SlotReturnAddress offset 24
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Quicksort
+SlotSavedS0 offset 16
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+SlotSavedS1 is stackSlot
+SlotSavedS1 in Quicksort
+SlotSavedS1 offset 8
+SlotSavedS1 type Int64
+SlotSavedS1 role savedRegister
+SlotSavedS1 stores s1
+
+SlotSavedS2 is stackSlot
+SlotSavedS2 in Quicksort
+SlotSavedS2 offset 0
+SlotSavedS2 type Int64
+SlotSavedS2 role savedRegister
+SlotSavedS2 stores s2
+
+# ---- blocks (source order IS layout — every fall-through edge is adjacent) ----
+
+Prologue is block
+Prologue in Quicksort
+Prologue entry yes
+Prologue terminates branch
+Prologue successor Epilogue
+Prologue successor PartitionInit
+Prologue purpose "Build frame, save callee-saved, return early when low >= high"
+
+PartitionInit is block
+PartitionInit in Quicksort
+PartitionInit terminates fallthrough
+PartitionInit predecessor Prologue
+PartitionInit successor PartitionCheck
+PartitionInit purpose "pivotValue = array[high]; boundary = low-1; scan = low"
+
+PartitionCheck is block
+PartitionCheck in Quicksort
+PartitionCheck terminates branch
+PartitionCheck predecessor PartitionInit
+PartitionCheck predecessor AdvanceScan
+PartitionCheck successor PartitionDone
+PartitionCheck successor PartitionBody
+PartitionCheck loop header
+PartitionCheck purpose "Loop guard: scan < high"
+
+PartitionBody is block
+PartitionBody in Quicksort
+PartitionBody terminates branch
+PartitionBody predecessor PartitionCheck
+PartitionBody successor AdvanceScan
+PartitionBody successor SwapElements
+PartitionBody loop body
+PartitionBody purpose "Load array[scan]; swap it into the prefix iff <= pivotValue"
+
+SwapElements is block
+SwapElements in Quicksort
+SwapElements terminates fallthrough
+SwapElements predecessor PartitionBody
+SwapElements successor AdvanceScan
+SwapElements loop body
+SwapElements purpose "boundary++; exchange array[boundary] <-> array[scan]"
+
+AdvanceScan is block
+AdvanceScan in Quicksort
+AdvanceScan terminates jump
+AdvanceScan predecessor PartitionBody
+AdvanceScan predecessor SwapElements
+AdvanceScan successor PartitionCheck
+AdvanceScan loop body
+AdvanceScan backEdgeTo PartitionCheck
+AdvanceScan purpose "scan++; loop back to the guard"
+
+PartitionDone is block
+PartitionDone in Quicksort
+PartitionDone terminates fallthrough
+PartitionDone predecessor PartitionCheck
+PartitionDone successor Epilogue
+PartitionDone purpose "Seat the pivot at boundary+1, then recurse left and right"
+
+Epilogue is block
+Epilogue in Quicksort
+Epilogue terminates return
+Epilogue predecessor Prologue
+Epilogue predecessor PartitionDone
+Epilogue purpose "Restore callee-saved, free frame, return"
+
+# ---- Prologue ----
+
+allocateFrame is insn
+allocateFrame in Prologue
+allocateFrame operation AddImmediate
+allocateFrame destination stackPointer
+allocateFrame firstSource stackPointer
+allocateFrame immediate -32
+allocateFrame effect stack.allocate
+allocateFrame purpose "Allocate the 16-byte-aligned 32-byte frame"
+
+saveReturnAddress is insn
+saveReturnAddress in Prologue
+saveReturnAddress operation StoreDoubleword
+saveReturnAddress secondSource returnAddress
+saveReturnAddress base stackPointer
+saveReturnAddress offset SlotReturnAddress
+saveReturnAddress effect memory.write
+saveReturnAddress memory region stackFrame
+saveReturnAddress saves returnAddress SlotReturnAddress
+saveReturnAddress purpose "Every Call clobbers returnAddress"
+
+saveCallerS0 is insn
+saveCallerS0 in Prologue
+saveCallerS0 operation StoreDoubleword
+saveCallerS0 secondSource s0
+saveCallerS0 base stackPointer
+saveCallerS0 offset SlotSavedS0
+saveCallerS0 effect memory.write
+saveCallerS0 memory region stackFrame
+saveCallerS0 saves s0 SlotSavedS0
+saveCallerS0 purpose "Preserve caller's s0 before it carries array"
+
+saveCallerS1 is insn
+saveCallerS1 in Prologue
+saveCallerS1 operation StoreDoubleword
+saveCallerS1 secondSource s1
+saveCallerS1 base stackPointer
+saveCallerS1 offset SlotSavedS1
+saveCallerS1 effect memory.write
+saveCallerS1 memory region stackFrame
+saveCallerS1 saves s1 SlotSavedS1
+saveCallerS1 purpose "Preserve caller's s1 before it carries high"
+
+saveCallerS2 is insn
+saveCallerS2 in Prologue
+saveCallerS2 operation StoreDoubleword
+saveCallerS2 secondSource s2
+saveCallerS2 base stackPointer
+saveCallerS2 offset SlotSavedS2
+saveCallerS2 effect memory.write
+saveCallerS2 memory region stackFrame
+saveCallerS2 saves s2 SlotSavedS2
+saveCallerS2 purpose "Preserve caller's s2 before it carries pivotIndex"
+
+guardTrivialRange is insn
+guardTrivialRange in Prologue
+guardTrivialRange operation BranchGreaterOrEqual
+guardTrivialRange firstSource a1
+guardTrivialRange secondSource a2
+guardTrivialRange target Epilogue
+guardTrivialRange fallthrough PartitionInit
+guardTrivialRange reads low
+guardTrivialRange reads high
+guardTrivialRange condition "low >= high: zero or one element, already sorted"
+
+# ---- PartitionInit ----
+
+computeHighOffset is insn
+computeHighOffset in PartitionInit
+computeHighOffset operation ShiftLeftLogicalImmediate
+computeHighOffset destination t0
+computeHighOffset firstSource a2
+computeHighOffset immediate 3
+computeHighOffset reads high
+computeHighOffset purpose "byte offset of array[high] (adjacent scratch)"
+
+computeHighAddress is insn
+computeHighAddress in PartitionInit
+computeHighAddress operation Add
+computeHighAddress destination t1
+computeHighAddress firstSource a0
+computeHighAddress secondSource t0
+computeHighAddress reads array
+computeHighAddress purpose "address of array[high]"
+
+loadPivot is insn
+loadPivot in PartitionInit
+loadPivot operation LoadDoubleword
+loadPivot destination t2
+loadPivot base t1
+loadPivot offset 0
+loadPivot effect memory.read
+loadPivot memory region callerArray
+loadPivot writes pivotValue
+loadPivot purpose "pivotValue = array[high]"
+
+initializeBoundary is insn
+initializeBoundary in PartitionInit
+initializeBoundary operation AddImmediate
+initializeBoundary destination t3
+initializeBoundary firstSource a1
+initializeBoundary immediate -1
+initializeBoundary reads low
+initializeBoundary writes boundary
+initializeBoundary purpose "boundary = low - 1 (empty prefix)"
+
+initializeScan is insn
+initializeScan in PartitionInit
+initializeScan operation Move
+initializeScan destination t4
+initializeScan firstSource a1
+initializeScan reads low
+initializeScan writes scan
+initializeScan purpose "scan = low"
+
+# ---- PartitionCheck (loop header) ----
+
+loopGuard is insn
+loopGuard in PartitionCheck
+loopGuard operation BranchGreaterOrEqual
+loopGuard firstSource t4
+loopGuard secondSource a2
+loopGuard target PartitionDone
+loopGuard fallthrough PartitionBody
+loopGuard reads scan
+loopGuard reads high
+loopGuard condition "scan >= high: partition finished"
+
+# ---- PartitionBody ----
+
+computeScanOffset is insn
+computeScanOffset in PartitionBody
+computeScanOffset operation ShiftLeftLogicalImmediate
+computeScanOffset destination t0
+computeScanOffset firstSource t4
+computeScanOffset immediate 3
+computeScanOffset reads scan
+computeScanOffset purpose "byte offset of array[scan]"
+
+computeScanAddress is insn
+computeScanAddress in PartitionBody
+computeScanAddress operation Add
+computeScanAddress destination t1
+computeScanAddress firstSource a0
+computeScanAddress secondSource t0
+computeScanAddress reads array
+computeScanAddress purpose "address of array[scan] — also reused by the swap store"
+
+loadElement is insn
+loadElement in PartitionBody
+loadElement operation LoadDoubleword
+loadElement destination t5
+loadElement base t1
+loadElement offset 0
+loadElement effect memory.read
+loadElement memory region callerArray
+loadElement purpose "element = array[scan] (adjacent scratch, not named)"
+
+skipIfGreater is insn
+skipIfGreater in PartitionBody
+skipIfGreater operation BranchLessThan
+skipIfGreater firstSource t2
+skipIfGreater secondSource t5
+skipIfGreater target AdvanceScan
+skipIfGreater fallthrough SwapElements
+skipIfGreater reads pivotValue
+skipIfGreater condition "pivotValue < element: element stays in the > suffix"
+
+# ---- SwapElements ----
+
+incrementBoundary is insn
+incrementBoundary in SwapElements
+incrementBoundary operation AddImmediate
+incrementBoundary destination t3
+incrementBoundary firstSource t3
+incrementBoundary immediate 1
+incrementBoundary reads boundary
+incrementBoundary writes boundary
+incrementBoundary purpose "Grow the <=pivot prefix"
+
+computeBoundaryOffset is insn
+computeBoundaryOffset in SwapElements
+computeBoundaryOffset operation ShiftLeftLogicalImmediate
+computeBoundaryOffset destination t0
+computeBoundaryOffset firstSource t3
+computeBoundaryOffset immediate 3
+computeBoundaryOffset reads boundary
+computeBoundaryOffset purpose "byte offset of array[boundary] (t0 reused — old offset is dead)"
+
+computeBoundaryAddress is insn
+computeBoundaryAddress in SwapElements
+computeBoundaryAddress operation Add
+computeBoundaryAddress destination t6
+computeBoundaryAddress firstSource a0
+computeBoundaryAddress secondSource t0
+computeBoundaryAddress reads array
+computeBoundaryAddress purpose "address of array[boundary]"
+
+loadBoundaryElement is insn
+loadBoundaryElement in SwapElements
+loadBoundaryElement operation LoadDoubleword
+loadBoundaryElement destination t0
+loadBoundaryElement base t6
+loadBoundaryElement offset 0
+loadBoundaryElement effect memory.read
+loadBoundaryElement memory region callerArray
+loadBoundaryElement purpose "old array[boundary] (t0 reused again — offset consumed)"
+
+storeElementAtBoundary is insn
+storeElementAtBoundary in SwapElements
+storeElementAtBoundary operation StoreDoubleword
+storeElementAtBoundary secondSource t5
+storeElementAtBoundary base t6
+storeElementAtBoundary offset 0
+storeElementAtBoundary effect memory.write
+storeElementAtBoundary memory region callerArray
+storeElementAtBoundary purpose "array[boundary] = element"
+
+storeOldAtScan is insn
+storeOldAtScan in SwapElements
+storeOldAtScan operation StoreDoubleword
+storeOldAtScan secondSource t0
+storeOldAtScan base t1
+storeOldAtScan offset 0
+storeOldAtScan effect memory.write
+storeOldAtScan memory region callerArray
+storeOldAtScan purpose "array[scan] = old array[boundary] — t1 still holds the scan address"
+
+# ---- AdvanceScan ----
+
+incrementScan is insn
+incrementScan in AdvanceScan
+incrementScan operation AddImmediate
+incrementScan destination t4
+incrementScan firstSource t4
+incrementScan immediate 1
+incrementScan reads scan
+incrementScan writes scan
+incrementScan purpose "scan++"
+
+loopBackEdge is insn
+loopBackEdge in AdvanceScan
+loopBackEdge operation Jump
+loopBackEdge target PartitionCheck
+loopBackEdge liveOut t2:pivotValue
+loopBackEdge liveOut t3:boundary
+loopBackEdge liveOut t4:scan
+loopBackEdge purpose "Loop-carried: pivotValue/boundary/scan must survive into the next iteration"
+
+# ---- PartitionDone: seat the pivot, then the two recursions ----
+
+computePivotIndex is insn
+computePivotIndex in PartitionDone
+computePivotIndex operation AddImmediate
+computePivotIndex destination t0
+computePivotIndex firstSource t3
+computePivotIndex immediate 1
+computePivotIndex reads boundary
+computePivotIndex writes pivotIndex
+computePivotIndex purpose "pivotIndex = boundary + 1"
+
+computePivotOffset is insn
+computePivotOffset in PartitionDone
+computePivotOffset operation ShiftLeftLogicalImmediate
+computePivotOffset destination t1
+computePivotOffset firstSource t0
+computePivotOffset immediate 3
+computePivotOffset reads pivotIndex
+computePivotOffset purpose "byte offset of array[pivotIndex]"
+
+computePivotAddress is insn
+computePivotAddress in PartitionDone
+computePivotAddress operation Add
+computePivotAddress destination t1
+computePivotAddress firstSource a0
+computePivotAddress secondSource t1
+computePivotAddress reads array
+computePivotAddress purpose "address of array[pivotIndex]"
+
+loadSeatElement is insn
+loadSeatElement in PartitionDone
+loadSeatElement operation LoadDoubleword
+loadSeatElement destination t5
+loadSeatElement base t1
+loadSeatElement offset 0
+loadSeatElement effect memory.read
+loadSeatElement memory region callerArray
+loadSeatElement purpose "old array[pivotIndex], displaced to the end"
+
+computeEndOffset is insn
+computeEndOffset in PartitionDone
+computeEndOffset operation ShiftLeftLogicalImmediate
+computeEndOffset destination t6
+computeEndOffset firstSource a2
+computeEndOffset immediate 3
+computeEndOffset reads high
+computeEndOffset purpose "byte offset of array[high]"
+
+computeEndAddress is insn
+computeEndAddress in PartitionDone
+computeEndAddress operation Add
+computeEndAddress destination t6
+computeEndAddress firstSource a0
+computeEndAddress secondSource t6
+computeEndAddress reads array
+computeEndAddress purpose "address of array[high]"
+
+storeDisplacedAtEnd is insn
+storeDisplacedAtEnd in PartitionDone
+storeDisplacedAtEnd operation StoreDoubleword
+storeDisplacedAtEnd secondSource t5
+storeDisplacedAtEnd base t6
+storeDisplacedAtEnd offset 0
+storeDisplacedAtEnd effect memory.write
+storeDisplacedAtEnd memory region callerArray
+storeDisplacedAtEnd purpose "array[high] = displaced element"
+
+storePivotAtSeat is insn
+storePivotAtSeat in PartitionDone
+storePivotAtSeat operation StoreDoubleword
+storePivotAtSeat secondSource t2
+storePivotAtSeat base t1
+storePivotAtSeat offset 0
+storePivotAtSeat effect memory.write
+storePivotAtSeat memory region callerArray
+storePivotAtSeat reads pivotValue
+storePivotAtSeat purpose "array[pivotIndex] = pivotValue — pivot is finally seated"
+
+moveArrayToS0 is insn
+moveArrayToS0 in PartitionDone
+moveArrayToS0 operation Move
+moveArrayToS0 destination s0
+moveArrayToS0 firstSource a0
+moveArrayToS0 reads array
+moveArrayToS0 writes array
+moveArrayToS0 purpose "array -> s0: the first Call clobbers a0"
+
+moveHighToS1 is insn
+moveHighToS1 in PartitionDone
+moveHighToS1 operation Move
+moveHighToS1 destination s1
+moveHighToS1 firstSource a2
+moveHighToS1 reads high
+moveHighToS1 writes high
+moveHighToS1 purpose "high -> s1: needed by the second recursion"
+
+movePivotIndexToS2 is insn
+movePivotIndexToS2 in PartitionDone
+movePivotIndexToS2 operation Move
+movePivotIndexToS2 destination s2
+movePivotIndexToS2 firstSource t0
+movePivotIndexToS2 reads pivotIndex
+movePivotIndexToS2 writes pivotIndex
+movePivotIndexToS2 purpose "pivotIndex -> s2: splits the two recursions"
+
+computeLeftHigh is insn
+computeLeftHigh in PartitionDone
+computeLeftHigh operation AddImmediate
+computeLeftHigh destination a2
+computeLeftHigh firstSource t0
+computeLeftHigh immediate -1
+computeLeftHigh reads pivotIndex
+computeLeftHigh purpose "left recursion bound: pivotIndex - 1 (a0=array, a1=low are already in place)"
+
+callSortLeft is insn
+callSortLeft in PartitionDone
+callSortLeft operation Call
+callSortLeft symbol qsort64
+callSortLeft effect call
+callSortLeft liveOut s0:array
+callSortLeft liveOut s1:high
+callSortLeft liveOut s2:pivotIndex
+callSortLeft purpose "qsort64(array, low, pivotIndex-1); three values ride out the call in s0/s1/s2"
+
+moveArrayBack is insn
+moveArrayBack in PartitionDone
+moveArrayBack operation Move
+moveArrayBack destination a0
+moveArrayBack firstSource s0
+moveArrayBack reads array
+moveArrayBack purpose "first argument again: array"
+
+computeRightLow is insn
+computeRightLow in PartitionDone
+computeRightLow operation AddImmediate
+computeRightLow destination a1
+computeRightLow firstSource s2
+computeRightLow immediate 1
+computeRightLow reads pivotIndex
+computeRightLow purpose "right recursion bound: pivotIndex + 1"
+
+moveHighBack is insn
+moveHighBack in PartitionDone
+moveHighBack operation Move
+moveHighBack destination a2
+moveHighBack firstSource s1
+moveHighBack reads high
+moveHighBack purpose "third argument again: high"
+
+callSortRight is insn
+callSortRight in PartitionDone
+callSortRight operation Call
+callSortRight symbol qsort64
+callSortRight effect call
+callSortRight purpose "qsort64(array, pivotIndex+1, high); nothing must survive this call"
+
+# ---- Epilogue ----
+
+restoreReturnAddress is insn
+restoreReturnAddress in Epilogue
+restoreReturnAddress operation LoadDoubleword
+restoreReturnAddress destination returnAddress
+restoreReturnAddress base stackPointer
+restoreReturnAddress offset SlotReturnAddress
+restoreReturnAddress effect memory.read
+restoreReturnAddress memory region stackFrame
+restoreReturnAddress restores returnAddress SlotReturnAddress
+restoreReturnAddress purpose "Restore return address"
+
+restoreCallerS0 is insn
+restoreCallerS0 in Epilogue
+restoreCallerS0 operation LoadDoubleword
+restoreCallerS0 destination s0
+restoreCallerS0 base stackPointer
+restoreCallerS0 offset SlotSavedS0
+restoreCallerS0 effect memory.read
+restoreCallerS0 memory region stackFrame
+restoreCallerS0 restores s0 SlotSavedS0
+restoreCallerS0 purpose "Restore caller's s0"
+
+restoreCallerS1 is insn
+restoreCallerS1 in Epilogue
+restoreCallerS1 operation LoadDoubleword
+restoreCallerS1 destination s1
+restoreCallerS1 base stackPointer
+restoreCallerS1 offset SlotSavedS1
+restoreCallerS1 effect memory.read
+restoreCallerS1 memory region stackFrame
+restoreCallerS1 restores s1 SlotSavedS1
+restoreCallerS1 purpose "Restore caller's s1"
+
+restoreCallerS2 is insn
+restoreCallerS2 in Epilogue
+restoreCallerS2 operation LoadDoubleword
+restoreCallerS2 destination s2
+restoreCallerS2 base stackPointer
+restoreCallerS2 offset SlotSavedS2
+restoreCallerS2 effect memory.read
+restoreCallerS2 memory region stackFrame
+restoreCallerS2 restores s2 SlotSavedS2
+restoreCallerS2 purpose "Restore caller's s2"
+
+freeFrame is insn
+freeFrame in Epilogue
+freeFrame operation AddImmediate
+freeFrame destination stackPointer
+freeFrame firstSource stackPointer
+freeFrame immediate 32
+freeFrame effect stack.free
+freeFrame purpose "Free the frame"
+
+returnVoid is insn
+returnVoid in Epilogue
+returnVoid operation Return
+returnVoid purpose "No result register: the work product is the mutated array"
+
+
+--- ATTEMPT 1 FAILED ---
+Your previous attempt was:
+# qsort64(array, low, high) — in-place Lomuto quicksort, inclusive bounds.
+#
+# The survival plan (what raw asm keeps in the programmer's head):
+#   * low        stays in a1 across the WHOLE partition loop (no call touches it,
+#                no loop row writes it) and is consumed by the first recursion;
+#   * array/high/pivotIndex must survive the FIRST recursive call -> s0/s1/s2;
+#   * pivotValue/boundary/scan are loop-carried in t2/t3/t4 (no calls inside
+#                the loop, so caller-saved is safe there — and cheap);
+#   * the swap scratch (t0/t1/t5/t6) is adjacent reuse, deliberately unnamed.
+
+prog is program
+prog target rva23u64
+prog xlen 64
+prog abi linux.riscv64
+
+stackFrame is memoryRegion
+stackFrame kind stack
+stackFrame aliases none
+
+callerArray is memoryRegion
+callerArray kind heap
+callerArray aliases none
+
+# ---- values that cross blocks or calls (LANGUAGE §0.5) ----
+
+array is value
+array type Int64Pointer
+array meaning "base of the caller's array; must survive the first recursion"
+
+low is value
+low type Int64
+low signed yes
+low meaning "left bound; parked in a1 untouched until the first recursion consumes it"
+
+high is value
+high type Int64
+high signed yes
+high meaning "right bound; must survive the partition loop and the first recursion"
+
+pivotValue is value
+pivotValue type Int64
+pivotValue signed yes
+pivotValue meaning "a[high], chosen pivot; loop-carried through the partition"
+
+boundary is value
+boundary type Int64
+boundary signed yes
+boundary meaning "Lomuto i: last index of the <=pivot prefix; loop-carried"
+
+scan is value
+scan type Int64
+scan signed yes
+scan meaning "Lomuto j: the scanning index; loop-carried"
+
+pivotIndex is value
+pivotIndex type Int64
+pivotIndex signed yes
+pivotIndex meaning "final pivot position p; splits the two recursions, survives the first"
+
+Quicksort is function
+Quicksort symbol qsort64
+Quicksort visibility global
+Quicksort abi linux.riscv64
+Quicksort in array Int64Pointer a0
+Quicksort in low Int64 a1
+Quicksort in high Int64 a2
+Quicksort effect memory.read callerArray
+Quicksort effect memory.write callerArray
+Quicksort effect call
+Quicksort leaf no
+Quicksort calls qsort64
+Quicksort stack bytes 32
+Quicksort stack align 16
+Quicksort preserves returnAddress
+Quicksort preserves s0
+Quicksort preserves s1
+Quicksort preserves s2
+Quicksort purpose "Sort array[low..high] in place; no result register"
+
+# ---- named slots ----
+
+SlotReturnAddress is stackSlot
+SlotReturnAddress in Quicksort
+SlotReturnAddress offset 24
+SlotReturnAddress type Address
+SlotReturnAddress role savedRegister
+SlotReturnAddress stores returnAddress
+
+SlotSavedS0 is stackSlot
+SlotSavedS0 in Quicksort
+SlotSavedS0 offset 16
+SlotSavedS0 type Int64
+SlotSavedS0 role savedRegister
+SlotSavedS0 stores s0
+
+SlotSavedS1 is stackSlot
+SlotSavedS1 in Quicksort
+SlotSavedS1 offset 8
+SlotSavedS1 type Int64
+SlotSavedS1 role savedRegister
+SlotSavedS1 stores s1
+
+SlotSavedS2 is stackSlot
+SlotSavedS2 in Quicksort
+SlotSavedS2 offset 0
+SlotSavedS2 type Int64
+SlotSavedS2 role savedRegister
+SlotSavedS2 stores s2
+
+# ---- blocks (source order IS layout — every fall-through edge is adjacent) ----
+
+Prologue is block
+Prologue in Quicksort
+Prologue entry yes
+Prologue terminates branch
+Prologue successor Epilogue
+Prologue successor PartitionInit
+Prologue purpose "Build frame, save callee-saved, return early when low >= high"
+
+PartitionInit is block
+PartitionInit in Quicksort
+PartitionInit terminates fallthrough
+PartitionInit predecessor Prologue
+PartitionInit successor PartitionCheck
+PartitionInit purpose "pivotValue = array[high]; boundary = low-1; scan = low"
+
+PartitionCheck is block
+PartitionCheck in Quicksort
+PartitionCheck terminates branch
+PartitionCheck predecessor PartitionInit
+PartitionCheck predecessor AdvanceScan
+PartitionCheck successor PartitionDone
+PartitionCheck successor PartitionBody
+PartitionCheck loop header
+PartitionCheck purpose "Loop guard: scan < high"
+
+PartitionBody is block
+PartitionBody in Quicksort
+PartitionBody terminates branch
+PartitionBody predecessor PartitionCheck
+PartitionBody successor SwapElements
+PartitionBody successor AdvanceScan
+PartitionBody loop body
+PartitionBody purpose "Load array[scan]; swap it into the prefix iff <= pivotValue"
+
+SwapElements is block
+SwapElements in Quicksort
+SwapElements terminates fallthrough
+SwapElements predecessor PartitionBody
+SwapElements successor AdvanceScan
+SwapElements loop body
+SwapElements purpose "boundary++; exchange array[boundary] <-> array[scan]"
+
+AdvanceScan is block
+AdvanceScan in Quicksort
+AdvanceScan terminates jump
+AdvanceScan predecessor PartitionBody
+AdvanceScan predecessor SwapElements
+AdvanceScan successor PartitionCheck
+AdvanceScan loop body
+AdvanceScan backEdgeTo PartitionCheck
+AdvanceScan purpose "scan++; loop back to the guard"
+
+PartitionDone is block
+PartitionDone in Quicksort
+PartitionDone terminates fallthrough
+PartitionDone predecessor PartitionCheck
+PartitionDone successor Epilogue
+PartitionDone purpose "Seat the pivot at boundary+1, then recurse left and right"
+
+Epilogue is block
+Epilogue in Quicksort
+Epilogue terminates return
+Epilogue predecessor Prologue
+Epilogue predecessor PartitionDone
+Epilogue purpose "Restore callee-saved, free frame, return"
+
+# ---- Prologue ----
+
+allocateFrame is insn
+allocateFrame in Prologue
+allocateFrame operation AddImmediate
+allocateFrame destination stackPointer
+allocateFrame firstSource stackPointer
+allocateFrame immediate -32
+allocateFrame effect stack.allocate
+allocateFrame purpose "Allocate the 16-byte-aligned 32-byte frame"
+
+saveReturnAddress is insn
+saveReturnAddress in Prologue
+saveReturnAddress operation StoreDoubleword
+saveReturnAddress secondSource returnAddress
+saveReturnAddress base stackPointer
+saveReturnAddress offset SlotReturnAddress
+saveReturnAddress effect memory.write
+saveReturnAddress memory region stackFrame
+saveReturnAddress saves returnAddress SlotReturnAddress
+saveReturnAddress purpose "Every Call clobbers returnAddress"
+
+saveCallerS0 is insn
+saveCallerS0 in Prologue
+saveCallerS0 operation StoreDoubleword
+saveCallerS0 secondSource s0
+saveCallerS0 base stackPointer
+saveCallerS0 offset SlotSavedS0
+saveCallerS0 effect memory.write
+saveCallerS0 memory region stackFrame
+saveCallerS0 saves s0 SlotSavedS0
+saveCallerS0 purpose "Preserve caller's s0 before it carries array"
+
+saveCallerS1 is insn
+saveCallerS1 in Prologue
+saveCallerS1 operation StoreDoubleword
+saveCallerS1 secondSource s1
+saveCallerS1 base stackPointer
+saveCallerS1 offset SlotSavedS1
+saveCallerS1 effect memory.write
+saveCallerS1 memory region stackFrame
+saveCallerS1 saves s1 SlotSavedS1
+saveCallerS1 purpose "Preserve caller's s1 before it carries high"
+
+saveCallerS2 is insn
+saveCallerS2 in Prologue
+saveCallerS2 operation StoreDoubleword
+saveCallerS2 secondSource s2
+saveCallerS2 base stackPointer
+saveCallerS2 offset SlotSavedS2
+saveCallerS2 effect memory.write
+saveCallerS2 memory region stackFrame
+saveCallerS2 saves s2 SlotSavedS2
+saveCallerS2 purpose "Preserve caller's s2 before it carries pivotIndex"
+
+guardTrivialRange is insn
+guardTrivialRange in Prologue
+guardTrivialRange operation BranchGreaterOrEqual
+guardTrivialRange firstSource a1
+guardTrivialRange secondSource a2
+guardTrivialRange target Epilogue
+guardTrivialRange fallthrough PartitionInit
+guardTrivialRange reads low
+guardTrivialRange reads high
+guardTrivialRange condition "low >= high: zero or one element, already sorted"
+
+# ---- PartitionInit ----
+
+computeHighOffset is insn
+computeHighOffset in PartitionInit
+computeHighOffset operation ShiftLeftLogicalImmediate
+computeHighOffset destination t0
+computeHighOffset firstSource a2
+computeHighOffset immediate 3
+computeHighOffset reads high
+computeHighOffset purpose "byte offset of array[high] (adjacent scratch)"
+
+computeHighAddress is insn
+computeHighAddress in PartitionInit
+computeHighAddress operation Add
+computeHighAddress destination t1
+computeHighAddress firstSource a0
+computeHighAddress secondSource t0
+computeHighAddress reads array
+computeHighAddress purpose "address of array[high]"
+
+loadPivot is insn
+loadPivot in PartitionInit
+loadPivot operation LoadDoubleword
+loadPivot destination t2
+loadPivot base t1
+loadPivot offset 0
+loadPivot effect memory.read
+loadPivot memory region callerArray
+loadPivot writes pivotValue
+loadPivot purpose "pivotValue = array[high]"
+
+initializeBoundary is insn
+initializeBoundary in PartitionInit
+initializeBoundary operation AddImmediate
+initializeBoundary destination t3
+initializeBoundary firstSource a1
+initializeBoundary immediate -1
+initializeBoundary reads low
+initializeBoundary writes boundary
+initializeBoundary purpose "boundary = low - 1 (empty prefix)"
+
+initializeScan is insn
+initializeScan in PartitionInit
+initializeScan operation Move
+initializeScan destination t4
+initializeScan firstSource a1
+initializeScan reads low
+initializeScan writes scan
+initializeScan purpose "scan = low"
+
+# ---- PartitionCheck (loop header) ----
+
+loopGuard is insn
+loopGuard in PartitionCheck
+loopGuard operation BranchGreaterOrEqual
+loopGuard firstSource t4
+loopGuard secondSource a2
+loopGuard target PartitionDone
+loopGuard fallthrough PartitionBody
+loopGuard reads scan
+loopGuard reads high
+loopGuard condition "scan >= high: partition finished"
+
+# ---- PartitionBody ----
+
+computeScanOffset is insn
+computeScanOffset in PartitionBody
+computeScanOffset operation ShiftLeftLogicalImmediate
+computeScanOffset destination t0
+computeScanOffset firstSource t4
+computeScanOffset immediate 3
+computeScanOffset reads scan
+computeScanOffset purpose "byte offset of array[scan]"
+
+computeScanAddress is insn
+computeScanAddress in PartitionBody
+computeScanAddress operation Add
+computeScanAddress destination t1
+computeScanAddress firstSource a0
+computeScanAddress secondSource t0
+computeScanAddress reads array
+computeScanAddress purpose "address of array[scan] — also reused by the swap store"
+
+loadElement is insn
+loadElement in PartitionBody
+loadElement operation LoadDoubleword
+loadElement destination t5
+loadElement base t1
+loadElement offset 0
+loadElement effect memory.read
+loadElement memory region callerArray
+loadElement purpose "element = array[scan] (adjacent scratch, not named)"
+
+swapIfLessOrEqual is insn
+swapIfLessOrEqual in PartitionBody
+swapIfLessOrEqual operation BranchGreaterThan
+swapIfLessOrEqual firstSource t5
+swapIfLessOrEqual secondSource t2
+swapIfLessOrEqual target AdvanceScan
+swapIfLessOrEqual fallthrough SwapElements
+swapIfLessOrEqual reads pivotValue
+swapIfLessOrEqual condition "element > pivotValue: element stays in the > suffix; else fall through to swap"
+
+# ---- SwapElements ----
+
+incrementBoundary is insn
+incrementBoundary in SwapElements
+incrementBoundary operation AddImmediate
+incrementBoundary destination t3
+incrementBoundary firstSource t3
+incrementBoundary immediate 1
+incrementBoundary reads boundary
+incrementBoundary writes boundary
+incrementBoundary purpose "Grow the <=pivot prefix"
+
+computeBoundaryOffset is insn
+computeBoundaryOffset in SwapElements
+computeBoundaryOffset operation ShiftLeftLogicalImmediate
+computeBoundaryOffset destination t0
+computeBoundaryOffset firstSource t3
+computeBoundaryOffset immediate 3
+computeBoundaryOffset reads boundary
+computeBoundaryOffset purpose "byte offset of array[boundary] (t0 reused — old offset is dead)"
+
+computeBoundaryAddress is insn
+computeBoundaryAddress in SwapElements
+computeBoundaryAddress operation Add
+computeBoundaryAddress destination t6
+computeBoundaryAddress firstSource a0
+computeBoundaryAddress secondSource t0
+computeBoundaryAddress reads array
+computeBoundaryAddress purpose "address of array[boundary]"
+
+loadBoundaryElement is insn
+loadBoundaryElement in SwapElements
+loadBoundaryElement operation LoadDoubleword
+loadBoundaryElement destination t0
+loadBoundaryElement base t6
+loadBoundaryElement offset 0
+loadBoundaryElement effect memory.read
+loadBoundaryElement memory region callerArray
+loadBoundaryElement purpose "old array[boundary] (t0 reused again — offset consumed)"
+
+storeElementAtBoundary is insn
+storeElementAtBoundary in SwapElements
+storeElementAtBoundary operation StoreDoubleword
+storeElementAtBoundary secondSource t5
+storeElementAtBoundary base t6
+storeElementAtBoundary offset 0
+storeElementAtBoundary effect memory.write
+storeElementAtBoundary memory region callerArray
+storeElementAtBoundary purpose "array[boundary] = element"
+
+storeOldAtScan is insn
+storeOldAtScan in SwapElements
+storeOldAtScan operation StoreDoubleword
+storeOldAtScan secondSource t0
+storeOldAtScan base t1
+storeOldAtScan offset 0
+storeOldAtScan effect memory.write
+storeOldAtScan memory region callerArray
+storeOldAtScan purpose "array[scan] = old array[boundary] — t1 still holds the scan address"
+
+# ---- AdvanceScan ----
+
+incrementScan is insn
+incrementScan in AdvanceScan
+incrementScan operation AddImmediate
+incrementScan destination t4
+incrementScan firstSource t4
+incrementScan immediate 1
+incrementScan reads scan
+incrementScan writes scan
+incrementScan purpose "scan++"
+
+loopBackEdge is insn
+loopBackEdge in AdvanceScan
+loopBackEdge operation Jump
+loopBackEdge target PartitionCheck
+loopBackEdge liveOut t2:pivotValue
+loopBackEdge liveOut t3:boundary
+loopBackEdge liveOut t4:scan
+loopBackEdge purpose "Loop-carried: pivotValue/boundary/scan must survive into the next iteration"
+
+# ---- PartitionDone: seat the pivot, then the two recursions ----
+
+computePivotIndex is insn
+computePivotIndex in PartitionDone
+computePivotIndex operation AddImmediate
+computePivotIndex destination t0
+computePivotIndex firstSource t3
+computePivotIndex immediate 1
+computePivotIndex reads boundary
+computePivotIndex writes pivotIndex
+computePivotIndex purpose "pivotIndex = boundary + 1"
+
+computePivotOffset is insn
+computePivotOffset in PartitionDone
+computePivotOffset operation ShiftLeftLogicalImmediate
+computePivotOffset destination t1
+computePivotOffset firstSource t0
+computePivotOffset immediate 3
+computePivotOffset reads pivotIndex
+computePivotOffset purpose "byte offset of array[pivotIndex]"
+
+computePivotAddress is insn
+computePivotAddress in PartitionDone
+computePivotAddress operation Add
+computePivotAddress destination t1
+computePivotAddress firstSource a0
+computePivotAddress secondSource t1
+computePivotAddress reads array
+computePivotAddress purpose "address of array[pivotIndex]"
+
+loadSeatElement is insn
+loadSeatElement in PartitionDone
+loadSeatElement operation LoadDoubleword
+loadSeatElement destination t5
+loadSeatElement base t1
+loadSeatElement offset 0
+loadSeatElement effect memory.read
+loadSeatElement memory region callerArray
+loadSeatElement purpose "old array[pivotIndex], displaced to the end"
+
+computeEndOffset is insn
+computeEndOffset in PartitionDone
+computeEndOffset operation ShiftLeftLogicalImmediate
+computeEndOffset destination t6
+computeEndOffset firstSource a2
+computeEndOffset immediate 3
+computeEndOffset reads high
+computeEndOffset purpose "byte offset of array[high]"
+
+computeEndAddress is insn
+computeEndAddress in PartitionDone
+computeEndAddress operation Add
+computeEndAddress destination t6
+computeEndAddress firstSource a0
+computeEndAddress secondSource t6
+computeEndAddress reads array
+computeEndAddress purpose "address of array[high]"
+
+storeDisplacedAtEnd is insn
+storeDisplacedAtEnd in PartitionDone
+storeDisplacedAtEnd operation StoreDoubleword
+storeDisplacedAtEnd secondSource t5
+storeDisplacedAtEnd base t6
+storeDisplacedAtEnd offset 0
+storeDisplacedAtEnd effect memory.write
+storeDisplacedAtEnd memory region callerArray
+storeDisplacedAtEnd purpose "array[high] = displaced element"
+
+storePivotAtSeat is insn
+storePivotAtSeat in PartitionDone
+storePivotAtSeat operation StoreDoubleword
+storePivotAtSeat secondSource t2
+storePivotAtSeat base t1
+storePivotAtSeat offset 0
+storePivotAtSeat effect memory.write
+storePivotAtSeat memory region callerArray
+storePivotAtSeat reads pivotValue
+storePivotAtSeat purpose "array[pivotIndex] = pivotValue — pivot is finally seated"
+
+moveArrayToS0 is insn
+moveArrayToS0 in PartitionDone
+moveArrayToS0 operation Move
+moveArrayToS0 destination s0
+moveArrayToS0 firstSource a0
+moveArrayToS0 reads array
+moveArrayToS0 writes array
+moveArrayToS0 purpose "array -> s0: the first Call clobbers a0"
+
+moveHighToS1 is insn
+moveHighToS1 in PartitionDone
+moveHighToS1 operation Move
+moveHighToS1 destination s1
+moveHighToS1 firstSource a2
+moveHighToS1 reads high
+moveHighToS1 writes high
+moveHighToS1 purpose "high -> s1: needed by the second recursion"
+
+movePivotIndexToS2 is insn
+movePivotIndexToS2 in PartitionDone
+movePivotIndexToS2 operation Move
+movePivotIndexToS2 destination s2
+movePivotIndexToS2 firstSource t0
+movePivotIndexToS2 reads pivotIndex
+movePivotIndexToS2 writes pivotIndex
+movePivotIndexToS2 purpose "pivotIndex -> s2: splits the two recursions"
+
+computeLeftHigh is insn
+computeLeftHigh in PartitionDone
+computeLeftHigh operation AddImmediate
+computeLeftHigh destination a2
+computeLeftHigh firstSource t0
+computeLeftHigh immediate -1
+computeLeftHigh reads pivotIndex
+computeLeftHigh purpose "left recursion bound: pivotIndex - 1 (a0=array, a1=low are already in place)"
+
+callSortLeft is insn
+callSortLeft in PartitionDone
+callSortLeft operation Call
+callSortLeft symbol qsort64
+callSortLeft effect call
+callSortLeft liveOut s0:array
+callSortLeft liveOut s1:high
+callSortLeft liveOut s2:pivotIndex
+callSortLeft purpose "qsort64(array, low, pivotIndex-1); three values ride out the call in s0/s1/s2"
+
+moveArrayBack is insn
+moveArrayBack in PartitionDone
+moveArrayBack operation Move
+moveArrayBack destination a0
+moveArrayBack firstSource s0
+moveArrayBack reads array
+moveArrayBack purpose "first argument again: array"
+
+computeRightLow is insn
+computeRightLow in PartitionDone
+computeRightLow operation AddImmediate
+computeRightLow destination a1
+computeRightLow firstSource s2
+computeRightLow immediate 1
+computeRightLow reads pivotIndex
+computeRightLow purpose "right recursion bound: pivotIndex + 1"
+
+moveHighBack is insn
+moveHighBack in PartitionDone
+moveHighBack operation Move
+moveHighBack destination a2
+moveHighBack firstSource s1
+moveHighBack reads high
+moveHighBack purpose "third argument again: high"
+
+callSortRight is insn
+callSortRight in PartitionDone
+callSortRight operation Call
+callSortRight symbol qsort64
+callSortRight effect call
+callSortRight purpose "qsort64(array, pivotIndex+1, high); nothing must survive this call"
+
+# ---- Epilogue ----
+
+restoreReturnAddress is insn
+restoreReturnAddress in Epilogue
+restoreReturnAddress operation LoadDoubleword
+restoreReturnAddress destination returnAddress
+restoreReturnAddress base stackPointer
+restoreReturnAddress offset SlotReturnAddress
+restoreReturnAddress effect memory.read
+restoreReturnAddress memory region stackFrame
+restoreReturnAddress restores returnAddress SlotReturnAddress
+restoreReturnAddress purpose "Restore return address"
+
+restoreCallerS0 is insn
+restoreCallerS0 in Epilogue
+restoreCallerS0 operation LoadDoubleword
+restoreCallerS0 destination s0
+restoreCallerS0 base stackPointer
+restoreCallerS0 offset SlotSavedS0
+restoreCallerS0 effect memory.read
+restoreCallerS0 memory region stackFrame
+restoreCallerS0 restores s0 SlotSavedS0
+restoreCallerS0 purpose "Restore caller's s0"
+
+restoreCallerS1 is insn
+restoreCallerS1 in Epilogue
+restoreCallerS1 operation LoadDoubleword
+restoreCallerS1 destination s1
+restoreCallerS1 base stackPointer
+restoreCallerS1 offset SlotSavedS1
+restoreCallerS1 effect memory.read
+restoreCallerS1 memory region stackFrame
+restoreCallerS1 restores s1 SlotSavedS1
+restoreCallerS1 purpose "Restore caller's s1"
+
+restoreCallerS2 is insn
+restoreCallerS2 in Epilogue
+restoreCallerS2 operation LoadDoubleword
+restoreCallerS2 destination s2
+restoreCallerS2 base stackPointer
+restoreCallerS2 offset SlotSavedS2
+restoreCallerS2 effect memory.read
+restoreCallerS2 memory region stackFrame
+restoreCallerS2 restores s2 SlotSavedS2
+restoreCallerS2 purpose "Restore caller's s2"
+
+freeFrame is insn
+freeFrame in Epilogue
+freeFrame operation AddImmediate
+freeFrame destination stackPointer
+freeFrame firstSource stackPointer
+freeFrame immediate 32
+freeFrame effect stack.free
+freeFrame purpose "Free the frame"
+
+returnVoid is insn
+returnVoid in Epilogue
+returnVoid operation Return
+returnVoid purpose "No result register: the work product is the mutated array"
+
+Toolchain output for that attempt:
+sasm build refused the file:
+error E-ISA-OPCODE swapIfLessOrEqual: unknown operation 'BranchGreaterThan'
+error E-CFG-EDGE PartitionBody: declares `terminates branch` but the last row (swapIfLessOrEqual) is fallthrough
+error E-CFG-LAYOUT PartitionBody: falls through without a terminator but declares 2 successors — exactly one (the physically next block) is required
+error E-CFG-EDGE PartitionBody: declares `successor AdvanceScan` but the terminator cannot take that edge — a stale edge silently widens every dataflow merge
+error E-CFG-EDGE AdvanceScan: declares predecessors ['PartitionBody', 'SwapElements'] but the CFG computes ['SwapElements'] — `predecessor` must be the exact inverse of `successor` when present
+
+Produce a corrected COMPLETE file. Same rules: return the whole file, no markdown fences, no explanations.

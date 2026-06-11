@@ -1,0 +1,3 @@
+sasm build refused the file:
+error E-VALUE-FLOW loadFirstResult: reads firstResult but ['stackPointer'] hold ['·def:allocateFrame:stackPointer']
+error E-VALUE-FLOW addResults: reads firstResult but ['a0', 't2'] hold ['·call:callFibNumberMinusTwo:a0', '·def:loadFirstResult:t2']

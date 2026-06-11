@@ -1,0 +1,6 @@
+sasm build refused the file:
+error E-VALUE-FLOW spillFirstResult: `writes` on an operation that defines no register (or discards to `zero`) — the binding cannot exist
+error E-ABI-PRESERVE spillFirstResult: declares `saves firstResult SlotFirstResult` but the row moves a0, not firstResult
+error E-ABI-PRESERVE reloadFirstResult: declares `restores firstResult SlotFirstResult` but the row moves t2, not firstResult
+error E-VALUE-FLOW reloadFirstResult: reads firstResult but ['stackPointer'] hold ['·def:allocateFrame:stackPointer']
+error E-VALUE-FLOW addResults: reads firstResult but ['a0', 't2'] hold ['·call:callFibNumberMinusTwo:a0', '·def:reloadFirstResult:t2']
